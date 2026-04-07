@@ -15,6 +15,11 @@ export default defineConfig({
         // SSE must not be buffered or compressed
         headers: { "Accept-Encoding": "identity" },
       },
+      "/api/ws": {
+        target: apiTarget,
+        changeOrigin: true,
+        ws: true,
+      },
       "/api": {
         target: apiTarget,
         changeOrigin: true,
