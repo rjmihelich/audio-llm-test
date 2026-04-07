@@ -451,10 +451,37 @@ class TestScheduler:
 
         # Execute with bounded concurrency
         semaphore = asyncio.Semaphore(self._max_workers)
+        # Per-task hard deadline: pipeline timeout + 30s grace for audio load / eval / DB.
+        # This ensures the semaphore slot is always released even if internal timeouts fail.
+        _task_deadline = self._timeout_s + 30.0
 
         async def bounded_execute(case):
-            async with semaphore:
-                return await self._execute_single(case, completed_ids)
+            try:
+                async with semaphore:
+                    try:
+                        return await asyncio.wait_for(
+                            self._execute_single(case, completed_ids),
+                            timeout=_task_deadline,
+                        )
+                    except asyncio.TimeoutError:
+                        record = self._make_error_record(
+                            case,
+                            f"Task timed out after {_task_deadline:.0f}s (pipeline + overhead)",
+                            "timeout",
+                        )
+                        await self._emit_result(record)
+                        return record
+            except Exception as e:
+                logger.error(
+                    f"Unhandled exception in bounded_execute for case {case.id[:8]}: "
+                    f"{type(e).__name__}: {e}",
+                    exc_info=True,
+                )
+                record = self._make_error_record(
+                    case, f"Unhandled exception: {type(e).__name__}: {e}", "pipeline"
+                )
+                await self._emit_result(record)
+                return record
 
         tasks = [bounded_execute(case) for case in pending]
         results = await asyncio.gather(*tasks, return_exceptions=True)
