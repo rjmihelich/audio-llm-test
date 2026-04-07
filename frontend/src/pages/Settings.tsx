@@ -4,8 +4,10 @@ import {
   fetchSettings,
   updateSettings,
   fetchKeyStatus,
+  importSlurp,
   type SettingsResponse,
   type KeyStatusResponse,
+  type SlurpImportResponse,
 } from "../api/client";
 
 interface KeyField {
@@ -170,6 +172,68 @@ function QualityBadge({ quality }: { quality: string }) {
     >
       {quality}
     </span>
+  );
+}
+
+function SlurpImportButton() {
+  const [importing, setImporting] = useState(false);
+  const [result, setResult] = useState<SlurpImportResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleImport = async () => {
+    setImporting(true);
+    setResult(null);
+    setError(null);
+    try {
+      const res = await importSlurp(100);
+      setResult(res);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Import failed");
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  return (
+    <div>
+      <button
+        onClick={handleImport}
+        disabled={importing}
+        className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors ${
+          importing
+            ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+            : "bg-emerald-600 text-white hover:bg-emerald-700"
+        }`}
+      >
+        {importing ? "Importing..." : "Scan & Import SLURP Files"}
+      </button>
+      {result && (
+        <div className="mt-3 p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-sm">
+          <p className="font-medium text-emerald-800">
+            Import complete: {result.imported} samples imported
+          </p>
+          <p className="text-emerald-700 mt-1">
+            Found {result.total_audio_files_found} files &middot;{" "}
+            {result.converted} converted &middot;{" "}
+            {result.skipped} skipped &middot;{" "}
+            {result.failed} failed
+            {result.has_annotations && ` \u00b7 ${result.annotation_count} annotations matched`}
+          </p>
+          {Object.keys(result.by_scenario).length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {Object.entries(result.by_scenario).sort((a, b) => b[1] - a[1]).map(([sc, cnt]) => (
+                <span key={sc} className="px-2 py-0.5 bg-emerald-100 text-emerald-800 rounded text-xs">
+                  {sc}: {cnt}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+      {error && (
+        <p className="mt-3 text-sm text-red-600">{error}</p>
+      )}
+    </div>
   );
 }
 
@@ -530,6 +594,16 @@ export default function Settings() {
             </p>
           </div>
         </div>
+      </div>
+
+      {/* SLURP Dataset Import */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 sm:p-6 mt-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">SLURP Dataset Import</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          Import SLURP natural speech recordings from storage into the database.
+          Scans for WAV/FLAC files and creates corpus entries with metadata.
+        </p>
+        <SlurpImportButton />
       </div>
 
       {/* Save bar */}

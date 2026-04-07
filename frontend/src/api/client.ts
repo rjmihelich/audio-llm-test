@@ -551,3 +551,20 @@ export function updateSettings(
     body: JSON.stringify(updates),
   });
 }
+
+export interface SlurpImportResponse {
+  imported: number;
+  converted: number;
+  skipped: number;
+  failed: number;
+  total_audio_files_found: number;
+  has_annotations: boolean;
+  annotation_count: number;
+  by_scenario: Record<string, number>;
+}
+
+export function importSlurp(maxPerScenario = 100): Promise<SlurpImportResponse> {
+  return request(`/speech/import-slurp?max_per_scenario=${maxPerScenario}`, {
+    method: "POST",
+  });
+}

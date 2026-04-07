@@ -1331,3 +1331,212 @@ async def get_sample_audio(
         media_type="audio/wav",
         filename=f"{sample_id}.wav",
     )
+
+
+# ---------------------------------------------------------------------------
+# SLURP import endpoint — scan existing audio files and register in DB
+# ---------------------------------------------------------------------------
+
+@router.post("/import-slurp")
+async def import_slurp(
+    max_per_scenario: int = Query(default=100, description="Max files per SLURP scenario"),
+    session: AsyncSession = Depends(get_session),
+):
+    """Scan storage for SLURP audio files (WAV or FLAC) and import into DB.
+
+    Looks in storage/audio/slurp_real/ and storage/slurp/ for audio files.
+    Creates Voice, CorpusEntry, and SpeechSample records.
+    """
+    import subprocess
+    import wave
+    from pathlib import Path
+
+    base = Path(settings.audio_storage_path).resolve().parent  # storage/
+    search_dirs = [
+        base / "audio" / "slurp_real",
+        base / "audio" / "slurp",
+        base / "slurp" / "audio",
+        base / "slurp",
+    ]
+
+    # Also check for annotation files
+    annotation_dirs = [
+        base / "slurp" / "annotations",
+        base / "slurp",
+    ]
+
+    # Find all audio files (WAV and FLAC)
+    audio_files: dict[str, Path] = {}
+    for d in search_dirs:
+        if not d.exists():
+            continue
+        for ext in ("*.wav", "*.flac"):
+            for f in d.rglob(ext):
+                audio_files[f.stem] = f  # key by stem (no extension)
+
+    if not audio_files:
+        raise HTTPException(404, f"No audio files found. Searched: {[str(d) for d in search_dirs]}")
+
+    # Try to load annotations for metadata
+    annotations: dict[str, dict] = {}
+    for ad in annotation_dirs:
+        if not ad.exists():
+            continue
+        for jsonl_file in ad.glob("*.jsonl"):
+            try:
+                with open(jsonl_file) as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        entry = json_mod.loads(line)
+                        # Map recordings to their entries
+                        for rec in entry.get("recordings", []):
+                            fname = rec.get("file", "")
+                            stem = fname.rsplit(".", 1)[0] if "." in fname else fname
+                            if stem:
+                                annotations[stem] = entry
+            except Exception:
+                continue
+
+    # SLURP scenario → category mapping
+    SCENARIO_MAP = {
+        "alarm": "general", "audio": "media", "calendar": "general",
+        "cooking": "general", "datetime": "general", "email": "general",
+        "general": "general", "iot": "general", "lists": "general",
+        "music": "media", "news": "general", "play": "media",
+        "qa": "general", "recommendation": "general", "social": "phone",
+        "takeaway": "general", "transport": "navigation", "weather": "climate",
+    }
+
+    # Get or create SLURP voice
+    voice_stmt = select(Voice).where(Voice.provider == "slurp")
+    existing_voice = (await session.execute(voice_stmt)).scalar_one_or_none()
+
+    if existing_voice is None:
+        slurp_voice = Voice(
+            provider="slurp",
+            voice_id="slurp_real",
+            name="SLURP Real Speaker",
+            gender="neutral",
+            age_group="adult",
+            accent="mixed",
+            language="en",
+        )
+        session.add(slurp_voice)
+        await session.flush()
+        voice_id = slurp_voice.id
+    else:
+        voice_id = existing_voice.id
+
+    imported = 0
+    skipped = 0
+    converted = 0
+    failed = 0
+    scenario_counts: dict[str, int] = {}
+
+    wav_output = base / "audio" / "slurp_real"
+    wav_output.mkdir(parents=True, exist_ok=True)
+
+    for stem, audio_path in audio_files.items():
+        # Get annotation metadata if available
+        ann = annotations.get(stem, {})
+        scenario = ann.get("scenario", "general")
+        category = SCENARIO_MAP.get(scenario, "general")
+        sentence = ann.get("sentence", stem.replace("_", " ").replace("-", " "))
+        intent = ann.get("intent", "")
+        action = ann.get("action", "")
+
+        # Cap per scenario
+        sc = scenario_counts.get(scenario, 0)
+        if sc >= max_per_scenario:
+            skipped += 1
+            continue
+
+        # Convert FLAC → WAV if needed
+        if audio_path.suffix.lower() == ".flac":
+            wav_path = wav_output / f"{stem}.wav"
+            if not wav_path.exists():
+                try:
+                    subprocess.run(
+                        ["ffmpeg", "-y", "-i", str(audio_path),
+                         "-ar", "16000", "-ac", "1", "-sample_fmt", "s16",
+                         str(wav_path)],
+                        capture_output=True, timeout=30, check=True,
+                    )
+                    converted += 1
+                except Exception:
+                    failed += 1
+                    continue
+            file_path = wav_path
+        else:
+            file_path = audio_path
+
+        # Get duration
+        try:
+            with wave.open(str(file_path), "rb") as wf:
+                duration_s = wf.getnframes() / wf.getframerate()
+                sample_rate = wf.getframerate()
+        except Exception:
+            duration_s = 0.0
+            sample_rate = 16000
+
+        # Check if corpus entry exists
+        existing_ce = (await session.execute(
+            select(CorpusEntry).where(
+                CorpusEntry.text == sentence,
+                CorpusEntry.language == "en",
+            )
+        )).scalar_one_or_none()
+
+        if existing_ce is None:
+            corpus_entry = CorpusEntry(
+                text=sentence,
+                category=category,
+                expected_intent=intent,
+                expected_action=action or None,
+                language="en",
+            )
+            session.add(corpus_entry)
+            await session.flush()
+            ce_id = corpus_entry.id
+        else:
+            ce_id = existing_ce.id
+
+        # Check if sample exists
+        existing_ss = (await session.execute(
+            select(SpeechSample).where(
+                SpeechSample.corpus_entry_id == ce_id,
+                SpeechSample.voice_id == voice_id,
+            )
+        )).scalar_one_or_none()
+
+        if existing_ss is None:
+            sample = SpeechSample(
+                corpus_entry_id=ce_id,
+                voice_id=voice_id,
+                file_path=str(file_path),
+                duration_s=duration_s,
+                sample_rate=sample_rate,
+                status="ready",
+            )
+            session.add(sample)
+
+        scenario_counts[scenario] = sc + 1
+        imported += 1
+
+        if imported % 200 == 0:
+            await session.commit()
+
+    await session.commit()
+
+    return {
+        "imported": imported,
+        "converted": converted,
+        "skipped": skipped,
+        "failed": failed,
+        "total_audio_files_found": len(audio_files),
+        "has_annotations": len(annotations) > 0,
+        "annotation_count": len(annotations),
+        "by_scenario": scenario_counts,
+    }
