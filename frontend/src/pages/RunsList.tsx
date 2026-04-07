@@ -1,6 +1,6 @@
-import { Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { listRuns, type RunResponse } from "../api/client";
+import { Link, useNavigate } from "react-router-dom";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { listRuns, launchRun, type RunResponse } from "../api/client";
 
 function statusColor(status: string) {
   switch (status) {
@@ -37,10 +37,21 @@ function duration(run: RunResponse) {
 }
 
 export default function RunsList() {
+  const navigate = useNavigate();
   const { data: runs, isLoading } = useQuery({
     queryKey: ["runs"],
     queryFn: listRuns,
     refetchInterval: 5000,
+  });
+
+  const rerun = useMutation({
+    mutationFn: (suiteId: string) => launchRun(suiteId),
+    onSuccess: (data) => navigate(`/runs/${data.id}`),
+  });
+
+  const rerunQuick = useMutation({
+    mutationFn: (suiteId: string) => launchRun(suiteId, false, 5),
+    onSuccess: (data) => navigate(`/runs/${data.id}`),
   });
 
   if (isLoading) {
@@ -153,7 +164,7 @@ export default function RunsList() {
                   </div>
 
                   {/* Action buttons */}
-                  <div className="flex gap-2">
+                  <div className="flex flex-wrap gap-1.5">
                     {run.status === "running" && (
                       <Link
                         to={`/runs/${run.id}`}
@@ -177,6 +188,26 @@ export default function RunsList() {
                       >
                         Details
                       </Link>
+                    )}
+                    {(run.status === "completed" || run.status === "failed") && (
+                      <>
+                        <button
+                          onClick={() => rerunQuick.mutate(run.test_suite_id)}
+                          disabled={rerunQuick.isPending}
+                          className="px-2.5 py-1.5 text-xs font-medium text-amber-700 bg-amber-100 rounded-lg hover:bg-amber-200 disabled:opacity-50"
+                          title="Re-run 5 random cases"
+                        >
+                          Re-test
+                        </button>
+                        <button
+                          onClick={() => rerun.mutate(run.test_suite_id)}
+                          disabled={rerun.isPending}
+                          className="px-2.5 py-1.5 text-xs font-medium text-green-700 bg-green-100 rounded-lg hover:bg-green-200 disabled:opacity-50"
+                          title="Re-run entire suite"
+                        >
+                          Re-run
+                        </button>
+                      </>
                     )}
                   </div>
                 </div>

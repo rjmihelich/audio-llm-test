@@ -108,9 +108,16 @@ export interface SweepConfigRequest {
   pipelines: string[];
   llm_backends: string[];
   voice_ids?: string[];
+  voice_providers?: string[];
   corpus_categories?: string[];
   corpus_entry_ids?: string[];
   system_prompt?: string;
+}
+
+export interface AudioSourcesResponse {
+  providers: Record<string, number>;
+  categories: Record<string, number>;
+  total_samples: number;
 }
 
 export interface SynthesizeRequest {
@@ -380,6 +387,10 @@ export function previewSweep(
 
 export function listTestSuites(): Promise<TestSuiteResponse[]> {
   return request("/tests/suites");
+}
+
+export function fetchAudioSources(): Promise<AudioSourcesResponse> {
+  return request("/tests/suites/audio-sources");
 }
 
 export function deleteTestSuite(

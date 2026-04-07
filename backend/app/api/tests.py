@@ -45,6 +45,7 @@ class SweepConfigRequest(BaseModel):
     pipelines: list[str] = Field(default=["direct_audio", "asr_text"])
     llm_backends: list[str] = Field(default=[])
     voice_ids: list[str] | None = None
+    voice_providers: list[str] | None = None
     corpus_categories: list[str] | None = None
     corpus_entry_ids: list[str] | None = None
     system_prompt: str = "You are a helpful in-car voice assistant."
@@ -76,10 +77,15 @@ async def create_test_suite(
     individual test cases with deterministic IDs.
     """
     # Query ready speech samples
+    from backend.app.models.speech import CorpusEntry, Voice
     sample_stmt = select(SpeechSample).where(SpeechSample.status == "ready")
     if config.voice_ids:
         sample_stmt = sample_stmt.where(
             SpeechSample.voice_id.in_([uuid.UUID(v) for v in config.voice_ids])
+        )
+    if config.voice_providers:
+        sample_stmt = sample_stmt.join(Voice).where(
+            Voice.provider.in_(config.voice_providers)
         )
     if config.corpus_entry_ids:
         sample_stmt = sample_stmt.where(
@@ -87,10 +93,14 @@ async def create_test_suite(
         )
     # Filter by corpus categories requires a join
     if config.corpus_categories:
-        from backend.app.models.speech import CorpusEntry
-        sample_stmt = sample_stmt.join(CorpusEntry).where(
-            CorpusEntry.category.in_(config.corpus_categories)
-        )
+        if not config.voice_providers:  # avoid double join
+            sample_stmt = sample_stmt.join(CorpusEntry).where(
+                CorpusEntry.category.in_(config.corpus_categories)
+            )
+        else:
+            sample_stmt = sample_stmt.join(CorpusEntry).where(
+                CorpusEntry.category.in_(config.corpus_categories)
+            )
 
     sample_result = await session.execute(sample_stmt)
     samples = sample_result.scalars().all()
@@ -216,6 +226,42 @@ async def list_test_suites(session: AsyncSession = Depends(get_session)):
     return responses
 
 
+class AudioSourcesResponse(BaseModel):
+    providers: dict[str, int]
+    categories: dict[str, int]
+    total_samples: int
+
+
+@router.get("/suites/audio-sources", response_model=AudioSourcesResponse)
+async def get_audio_sources(session: AsyncSession = Depends(get_session)):
+    """Get available audio sources (providers and categories) with sample counts."""
+    from backend.app.models.speech import CorpusEntry, Voice
+
+    provider_stmt = (
+        select(Voice.provider, func.count(SpeechSample.id))
+        .join(Voice, SpeechSample.voice_id == Voice.id)
+        .where(SpeechSample.status == "ready")
+        .group_by(Voice.provider)
+    )
+    provider_result = await session.execute(provider_stmt)
+    providers = {row[0]: row[1] for row in provider_result.all()}
+
+    category_stmt = (
+        select(CorpusEntry.category, func.count(SpeechSample.id))
+        .join(CorpusEntry, SpeechSample.corpus_entry_id == CorpusEntry.id)
+        .where(SpeechSample.status == "ready")
+        .group_by(CorpusEntry.category)
+    )
+    category_result = await session.execute(category_stmt)
+    categories = {row[0]: row[1] for row in category_result.all()}
+
+    total_stmt = select(func.count()).select_from(SpeechSample).where(SpeechSample.status == "ready")
+    total_result = await session.execute(total_stmt)
+    total = total_result.scalar() or 0
+
+    return AudioSourcesResponse(providers=providers, categories=categories, total_samples=total)
+
+
 @router.get("/suites/{suite_id}", response_model=TestSuiteResponse)
 async def get_test_suite(
     suite_id: str,
@@ -263,6 +309,7 @@ async def preview_sweep(
     n_backends = len(config.llm_backends) or 1
 
     # Count ready speech samples matching filters
+    from backend.app.models.speech import CorpusEntry, Voice
     sample_stmt = select(func.count()).select_from(SpeechSample).where(
         SpeechSample.status == "ready"
     )
@@ -270,15 +317,23 @@ async def preview_sweep(
         sample_stmt = sample_stmt.where(
             SpeechSample.voice_id.in_([uuid.UUID(v) for v in config.voice_ids])
         )
+    if config.voice_providers:
+        sample_stmt = sample_stmt.join(Voice).where(
+            Voice.provider.in_(config.voice_providers)
+        )
     if config.corpus_entry_ids:
         sample_stmt = sample_stmt.where(
             SpeechSample.corpus_entry_id.in_([uuid.UUID(c) for c in config.corpus_entry_ids])
         )
     if config.corpus_categories:
-        from backend.app.models.speech import CorpusEntry
-        sample_stmt = sample_stmt.join(CorpusEntry).where(
-            CorpusEntry.category.in_(config.corpus_categories)
-        )
+        if not config.voice_providers:
+            sample_stmt = sample_stmt.join(CorpusEntry).where(
+                CorpusEntry.category.in_(config.corpus_categories)
+            )
+        else:
+            sample_stmt = sample_stmt.join(CorpusEntry).where(
+                CorpusEntry.category.in_(config.corpus_categories)
+            )
 
     count_result = await session.execute(sample_stmt)
     n_speech = count_result.scalar() or 0

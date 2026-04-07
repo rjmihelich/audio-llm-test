@@ -9,6 +9,7 @@ import {
   launchRun,
   fetchKeyStatus,
   fetchOllamaModels,
+  fetchAudioSources,
   type SweepConfigRequest,
   type SweepPreview,
   type KeyStatusResponse,
@@ -294,9 +295,47 @@ function SuiteRow({
 // New Suite Form
 // ---------------------------------------------------------------------------
 
+function SectionHeader({ title, count }: { title: string; count?: number }) {
+  return (
+    <div className="flex items-center gap-2 mb-2">
+      <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{title}</h4>
+      {count !== undefined && (
+        <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">{count} selected</span>
+      )}
+    </div>
+  );
+}
+
+function PillSelect({ options, selected, onToggle, format }: {
+  options: (number | string)[];
+  selected: (number | string)[];
+  onToggle: (v: number | string) => void;
+  format?: (v: number | string) => string;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map((v) => (
+        <button
+          key={v}
+          onClick={() => onToggle(v)}
+          className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
+            selected.includes(v)
+              ? "bg-slate-800 text-white border-slate-800"
+              : "bg-white text-gray-500 border-gray-200 hover:border-gray-400"
+          }`}
+        >
+          {format ? format(v) : String(v)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  const [selectedProviders, setSelectedProviders] = useState<string[]>([]);
+  const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [snrValues, setSnrValues] = useState<number[]>([0, 10, 20]);
   const [speechLevels, setSpeechLevels] = useState<number[]>([0]);
   const [noiseTypes, setNoiseTypes] = useState<string[]>(["pink_lpf"]);
@@ -305,12 +344,13 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
   const [pipelines, setPipelines] = useState<string[]>(["asr_text"]);
   const [backends, setBackends] = useState<string[]>([]);
   const [preview, setPreview] = useState<SweepPreview | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const keyStatus = useQuery({ queryKey: ["keyStatus"], queryFn: fetchKeyStatus });
   const ollamaStatus = useQuery({ queryKey: ["ollamaModels"], queryFn: fetchOllamaModels, refetchInterval: 30000 });
+  const audioSources = useQuery({ queryKey: ["audioSources"], queryFn: fetchAudioSources });
   const keys = keyStatus.data;
 
-  // Build dynamic ALL_BACKENDS from Ollama discovery + cloud
   const ollamaBackends: BackendDef[] = (ollamaStatus.data?.models ?? []).map((m) => ({
     key: `ollama:${m.name}`,
     label: `Ollama · ${m.name}${m.parameter_size ? ` (${m.parameter_size})` : ""}`,
@@ -327,12 +367,11 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
       snr_db_values: snrValues,
       speech_level_db_values: speechLevels,
       noise_types: noiseTypes,
-      echo: {
-        delay_ms_values: delayRange,
-        gain_db_values: gainRange,
-      },
+      echo: { delay_ms_values: delayRange, gain_db_values: gainRange },
       pipelines,
       llm_backends: backends,
+      ...(selectedProviders.length > 0 ? { voice_providers: selectedProviders } : {}),
+      ...(selectedCategories.length > 0 ? { corpus_categories: selectedCategories } : {}),
     };
   }
 
@@ -355,240 +394,231 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
     return keys[field] ?? false;
   }
 
-  // Filter backends by selected pipelines
   const availableBackends = ALL_BACKENDS.filter((b) => {
     if (b.pipeline === "both") return true;
     return pipelines.includes(b.pipeline);
   });
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6 mb-6">
-      <h3 className="text-lg font-semibold text-gray-900 mb-5">
-        New Test Suite
-      </h3>
-
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Name & description */}
-        <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Name
-            </label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-              placeholder="e.g. Local Free Pipeline Test"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Description
-            </label>
-            <input
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
-              placeholder="Optional description"
-            />
-          </div>
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mb-6 space-y-5">
+      {/* Row 1: Name + Description */}
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="sm:col-span-1">
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+            placeholder="Suite name"
+          />
         </div>
-
-        {/* SNR Values */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            SNR (dB)
-          </label>
-          <div className="flex flex-wrap gap-2">
-            {SNR_OPTIONS.map((v) => (
-              <button
-                key={v}
-                onClick={() => toggleItem(snrValues, v, setSnrValues)}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-                  snrValues.includes(v)
-                    ? "bg-slate-800 text-white border-slate-800"
-                    : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
-                }`}
-              >
-                {v} dB
-              </button>
-            ))}
-          </div>
+        <div className="sm:col-span-2">
+          <input
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm"
+            placeholder="Optional description"
+          />
         </div>
+      </div>
 
-        {/* Speech Level */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            Speech Level (dB)
-          </label>
-          <p className="text-xs text-gray-400 mb-2">
-            Digital gain on speech. Negative = whisper/quiet, 0 = original, positive = loud/overload clipping.
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {SPEECH_LEVEL_OPTIONS.map((v) => (
-              <button
-                key={v}
-                onClick={() => toggleItem(speechLevels, v, setSpeechLevels)}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-                  speechLevels.includes(v)
-                    ? v < -20
-                      ? "bg-blue-600 text-white border-blue-600"
-                      : v > 10
-                        ? "bg-red-600 text-white border-red-600"
-                        : "bg-slate-800 text-white border-slate-800"
-                    : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
-                }`}
-              >
-                {v > 0 ? `+${v}` : v} dB
-                {v <= -40 && " 🤫"}
-                {v >= 20 && " 📢"}
-              </button>
-            ))}
+      {/* Row 2: Audio Sources + LLM Backends side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        {/* Audio Sources */}
+        <div className="lg:col-span-2 bg-blue-50/60 rounded-lg p-4 border border-blue-100">
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Audio Sources</h4>
+            {audioSources.data && (
+              <span className="text-[11px] font-medium text-blue-600">
+                {audioSources.data.total_samples.toLocaleString()} samples available
+              </span>
+            )}
           </div>
-        </div>
-
-        {/* Noise types */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Noise Types
-          </label>
-          <div className="space-y-1.5">
-            {NOISE_TYPES.map((n) => (
-              <label key={n} className="flex items-center gap-2 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={noiseTypes.includes(n)}
-                  onChange={() => toggleItem(noiseTypes, n, setNoiseTypes)}
-                  className="rounded border-gray-300"
-                />
-                {n.replace("_", " ")}
-              </label>
-            ))}
-          </div>
-        </div>
-
-        {/* Echo config */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Echo Delay (ms)
-          </label>
-          <div className="flex flex-wrap gap-2">
-            {[0, 25, 50, 100, 150, 200, 300].map((v) => (
-              <button
-                key={v}
-                onClick={() => toggleItem(delayRange, v, setDelayRange)}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-                  delayRange.includes(v)
-                    ? "bg-slate-800 text-white border-slate-800"
-                    : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
-                }`}
-              >
-                {v}ms
-              </button>
-            ))}
-          </div>
-
-          <label className="block text-sm font-medium text-gray-700 mt-4 mb-2">
-            Echo Gain (dB)
-          </label>
-          <div className="flex flex-wrap gap-2">
-            {[-60, -40, -20, -10, -6, -3].map((v) => (
-              <button
-                key={v}
-                onClick={() => toggleItem(gainRange, v, setGainRange)}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-                  gainRange.includes(v)
-                    ? "bg-slate-800 text-white border-slate-800"
-                    : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
-                }`}
-              >
-                {v} dB
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Pipelines & Backends */}
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">
-            Pipelines
-          </label>
-          <div className="space-y-1.5">
-            {PIPELINES.map((p) => (
-              <label key={p} className="flex items-center gap-2 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={pipelines.includes(p)}
-                  onChange={() => toggleItem(pipelines, p, setPipelines)}
-                  className="rounded border-gray-300"
-                />
-                {p === "asr_text" ? "ASR \u2192 Text \u2192 LLM" : "Audio \u2192 LLM (direct)"}
-              </label>
-            ))}
-          </div>
-
-          {/* STT info */}
-          {pipelines.includes("asr_text") && (
-            <div className="mt-3 p-3 bg-gray-50 rounded-lg">
-              <p className="text-xs font-medium text-gray-500 mb-2">Speech-to-Text</p>
-              {STT_BACKENDS.map((s) => (
-                <div key={s.key} className="flex items-center gap-2 text-xs text-gray-600 mb-1">
-                  <CostBadge paid={s.paid} hasKey={hasKey(s.keyField)} />
-                  <span className={s.paid && !hasKey(s.keyField) ? "text-red-500 line-through" : ""}>
-                    {s.label}
-                  </span>
-                  {s.key === "whisper-local" && (
-                    <span className="text-green-600 text-[10px]">(auto-selected)</span>
-                  )}
+          {audioSources.data && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <p className="text-[10px] font-medium text-gray-500 mb-1.5">PROVIDER</p>
+                <div className="space-y-1">
+                  {Object.entries(audioSources.data.providers)
+                    .sort(([, a], [, b]) => b - a)
+                    .map(([provider, count]) => (
+                      <label key={provider} className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedProviders.includes(provider)}
+                          onChange={() => toggleItem(selectedProviders, provider, setSelectedProviders)}
+                          className="rounded border-gray-300 h-3.5 w-3.5"
+                        />
+                        <span className="flex-1">{provider}</span>
+                        <span className="text-[10px] text-gray-400 tabular-nums">{count.toLocaleString()}</span>
+                      </label>
+                    ))}
                 </div>
-              ))}
+                {selectedProviders.length > 0 && (
+                  <button onClick={() => setSelectedProviders([])} className="mt-1 text-[10px] text-blue-500 hover:text-blue-700">clear</button>
+                )}
+              </div>
+              <div>
+                <p className="text-[10px] font-medium text-gray-500 mb-1.5">CATEGORY</p>
+                <div className="space-y-1">
+                  {Object.entries(audioSources.data.categories)
+                    .sort(([, a], [, b]) => b - a)
+                    .map(([category, count]) => (
+                      <label key={category} className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={selectedCategories.includes(category)}
+                          onChange={() => toggleItem(selectedCategories, category, setSelectedCategories)}
+                          className="rounded border-gray-300 h-3.5 w-3.5"
+                        />
+                        <span className="flex-1">{category.replace(/_/g, " ")}</span>
+                        <span className="text-[10px] text-gray-400 tabular-nums">{count.toLocaleString()}</span>
+                      </label>
+                    ))}
+                </div>
+                {selectedCategories.length > 0 && (
+                  <button onClick={() => setSelectedCategories([])} className="mt-1 text-[10px] text-blue-500 hover:text-blue-700">clear</button>
+                )}
+              </div>
             </div>
           )}
+          {(selectedProviders.length > 0 || selectedCategories.length > 0) && (
+            <p className="mt-2 text-[10px] text-blue-600 border-t border-blue-200 pt-2">
+              Filtered to: {[...selectedProviders, ...selectedCategories.map(c => c.replace(/_/g, " "))].join(", ")}
+            </p>
+          )}
+          {!audioSources.data && <p className="text-xs text-gray-400">Loading...</p>}
+        </div>
 
-          <label className="block text-sm font-medium text-gray-700 mt-4 mb-2">
-            LLM Backends
-          </label>
-          <div className="space-y-1.5">
-            {availableBackends.map((b) => {
-              const keyOk = hasKey(b.keyField);
-              const disabled = b.paid && !keyOk;
-
-              return (
-                <label
-                  key={b.key}
-                  className={`flex items-center gap-2 text-sm ${
-                    disabled ? "text-red-500" : "text-gray-700"
-                  }`}
-                >
+        {/* Pipeline & Backends */}
+        <div className="space-y-3">
+          <div>
+            <SectionHeader title="Pipeline" />
+            <div className="space-y-1">
+              {PIPELINES.map((p) => (
+                <label key={p} className="flex items-center gap-2 text-xs text-gray-700">
                   <input
                     type="checkbox"
-                    checked={backends.includes(b.key)}
-                    onChange={() => toggleItem(backends, b.key, setBackends)}
-                    className="rounded border-gray-300"
-                    disabled={disabled}
+                    checked={pipelines.includes(p)}
+                    onChange={() => toggleItem(pipelines, p, setPipelines)}
+                    className="rounded border-gray-300 h-3.5 w-3.5"
                   />
-                  <CostBadge paid={b.paid} hasKey={keyOk} />
-                  <span className={disabled ? "line-through" : ""}>
-                    {b.label}
-                  </span>
-                  {disabled && (
-                    <span className="text-[10px] text-red-400">no API key</span>
-                  )}
+                  {p === "asr_text" ? "ASR \u2192 Text \u2192 LLM" : "Audio \u2192 LLM (direct)"}
                 </label>
-              );
-            })}
+              ))}
+            </div>
+            {pipelines.includes("asr_text") && (
+              <div className="mt-1.5 pl-5 text-[10px] text-gray-400">
+                STT: {STT_BACKENDS.filter(s => !s.paid || hasKey(s.keyField)).map(s => s.label).join(" | ")}
+              </div>
+            )}
+          </div>
+
+          <div>
+            <SectionHeader title="LLM Backends" count={backends.length} />
+            <div className="space-y-1 max-h-48 overflow-y-auto">
+              {availableBackends.map((b) => {
+                const keyOk = hasKey(b.keyField);
+                const disabled = b.paid && !keyOk;
+                return (
+                  <label key={b.key} className={`flex items-center gap-2 text-xs ${disabled ? "text-red-400" : "text-gray-700"}`}>
+                    <input
+                      type="checkbox"
+                      checked={backends.includes(b.key)}
+                      onChange={() => toggleItem(backends, b.key, setBackends)}
+                      className="rounded border-gray-300 h-3.5 w-3.5"
+                      disabled={disabled}
+                    />
+                    <CostBadge paid={b.paid} hasKey={keyOk} />
+                    <span className={`flex-1 truncate ${disabled ? "line-through" : ""}`}>{b.label}</span>
+                  </label>
+                );
+              })}
+            </div>
           </div>
         </div>
       </div>
 
-      {/* Preview & Create */}
-      <div className="mt-6 flex items-center gap-3 border-t border-gray-100 pt-5">
+      {/* Row 3: Audio Degradation — compact horizontal */}
+      <div>
+        <div className="flex items-center gap-3 mb-3">
+          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Audio Degradation</h4>
+          <button
+            onClick={() => setShowAdvanced(!showAdvanced)}
+            className="text-[10px] text-blue-500 hover:text-blue-700 font-medium"
+          >
+            {showAdvanced ? "Hide advanced" : "Show advanced"}
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          {/* SNR */}
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500 w-24 shrink-0">SNR (dB)</span>
+            <PillSelect
+              options={SNR_OPTIONS}
+              selected={snrValues}
+              onToggle={(v) => toggleItem(snrValues, v as number, setSnrValues)}
+              format={(v) => `${v}`}
+            />
+          </div>
+
+          {/* Noise */}
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500 w-24 shrink-0">Noise</span>
+            <PillSelect
+              options={NOISE_TYPES}
+              selected={noiseTypes}
+              onToggle={(v) => toggleItem(noiseTypes, v as string, setNoiseTypes)}
+              format={(v) => String(v).replace("_", " ")}
+            />
+          </div>
+
+          {/* Advanced: Speech Level, Echo */}
+          {showAdvanced && (
+            <>
+              <div className="flex items-start gap-3">
+                <span className="text-xs text-gray-500 w-24 shrink-0 pt-1">Speech Level</span>
+                <div>
+                  <PillSelect
+                    options={SPEECH_LEVEL_OPTIONS}
+                    selected={speechLevels}
+                    onToggle={(v) => toggleItem(speechLevels, v as number, setSpeechLevels)}
+                    format={(v) => `${Number(v) > 0 ? "+" : ""}${v} dB`}
+                  />
+                  <p className="text-[10px] text-gray-400 mt-1">0 = original, negative = whisper, positive = loud/clip</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 w-24 shrink-0">Echo Delay</span>
+                <PillSelect
+                  options={[0, 25, 50, 100, 150, 200, 300]}
+                  selected={delayRange}
+                  onToggle={(v) => toggleItem(delayRange, v as number, setDelayRange)}
+                  format={(v) => `${v}ms`}
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 w-24 shrink-0">Echo Gain</span>
+                <PillSelect
+                  options={[-60, -40, -20, -10, -6, -3]}
+                  selected={gainRange}
+                  onToggle={(v) => toggleItem(gainRange, v as number, setGainRange)}
+                  format={(v) => `${v} dB`}
+                />
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Row 4: Actions */}
+      <div className="flex items-center gap-3 border-t border-gray-100 pt-4">
         <button
           onClick={() => previewMutation.mutate()}
           disabled={!name || previewMutation.isPending}
           className="px-4 py-2 bg-white text-gray-700 text-sm font-medium rounded-lg border border-gray-200 hover:bg-gray-50 disabled:opacity-50 transition-colors"
         >
-          Preview
+          {previewMutation.isPending ? "..." : "Preview"}
         </button>
         <button
           onClick={() => createMutation.mutate()}
@@ -599,25 +629,20 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
         </button>
 
         {preview && (
-          <div className="ml-4 text-sm text-gray-600">
-            <span className="font-semibold text-gray-900">
-              {preview.total_cases.toLocaleString()}
-            </span>{" "}
-            total cases
-            {preview.estimated_duration_minutes != null && (
-              <span className="ml-2 text-gray-500">
-                (~{preview.estimated_duration_minutes.toFixed(0)} min)
+          <div className="ml-2 text-sm text-gray-600">
+            <span className="font-semibold text-gray-900">{preview.total_cases.toLocaleString()}</span> cases
+            {preview.breakdown.speech_samples != null && (
+              <span className="ml-1.5 text-xs text-gray-400">
+                ({preview.breakdown.speech_samples} samples &times; {preview.breakdown.snr_levels} SNR &times; {preview.breakdown.noise_types} noise &times; {preview.breakdown.backends} backends)
               </span>
             )}
           </div>
         )}
-      </div>
 
-      {createMutation.isError && (
-        <p className="mt-3 text-sm text-red-600">
-          {(createMutation.error as Error).message}
-        </p>
-      )}
+        {createMutation.isError && (
+          <span className="text-xs text-red-600">{(createMutation.error as Error).message}</span>
+        )}
+      </div>
     </div>
   );
 }

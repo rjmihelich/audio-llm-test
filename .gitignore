@@ -44,3 +44,6 @@ logs/
 # Misc
 curl
 *.sqlite3
+*.jpg
+*.jpeg
+*.png

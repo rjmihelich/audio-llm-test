@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { useParams, Link } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   LineChart,
   Line,
@@ -16,6 +16,7 @@ import {
   queryResults,
   getExportUrl,
   getRun,
+  launchRun,
   type StatsResponse,
   type ResultResponse,
 } from "../api/client";
@@ -34,12 +35,23 @@ const CHART_COLORS = [
 
 export default function Results() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
   const [tab, setTab] = useState<Tab>("results");
 
   const run = useQuery({
     queryKey: ["run", id],
     queryFn: () => getRun(id!),
     enabled: !!id,
+  });
+
+  const rerun = useMutation({
+    mutationFn: () => launchRun(run.data!.test_suite_id),
+    onSuccess: (data) => navigate(`/runs/${data.id}`),
+  });
+
+  const rerunQuick = useMutation({
+    mutationFn: () => launchRun(run.data!.test_suite_id, false, 5),
+    onSuccess: (data) => navigate(`/runs/${data.id}`),
   });
 
   const stats = useQuery({
@@ -78,6 +90,24 @@ export default function Results() {
           )}
         </div>
         <p className="text-sm text-gray-500 font-mono">{id?.slice(0, 12)}...</p>
+        {r && (r.status === "completed" || r.status === "failed") && (
+          <div className="flex gap-2 mt-2">
+            <button
+              onClick={() => rerunQuick.mutate()}
+              disabled={rerunQuick.isPending}
+              className="px-3 py-1.5 text-xs font-medium text-amber-700 bg-amber-100 rounded-lg hover:bg-amber-200 disabled:opacity-50"
+            >
+              {rerunQuick.isPending ? "..." : "Re-test (5 cases)"}
+            </button>
+            <button
+              onClick={() => rerun.mutate()}
+              disabled={rerun.isPending}
+              className="px-3 py-1.5 text-xs font-medium text-green-700 bg-green-100 rounded-lg hover:bg-green-200 disabled:opacity-50"
+            >
+              {rerun.isPending ? "..." : "Re-run Full Suite"}
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Summary cards */}
