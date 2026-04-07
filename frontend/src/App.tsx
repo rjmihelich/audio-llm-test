@@ -72,22 +72,22 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-gray-50">
-      {/* Desktop sidebar - hidden on mobile */}
-      <aside className="hidden md:flex w-64 bg-slate-800 text-white flex-col shrink-0">
-        <div className="px-6 py-5 border-b border-slate-700">
-          <h1 className="text-lg font-bold tracking-tight">Audio LLM Test</h1>
-          <p className="text-xs text-slate-400 mt-0.5">Quality Evaluation Platform</p>
+      {/* Desktop sidebar */}
+      <aside className="hidden md:flex w-56 bg-slate-800 text-white flex-col shrink-0">
+        <div className="px-5 py-4 border-b border-slate-700">
+          <h1 className="text-base font-bold tracking-tight">Audio LLM Test</h1>
+          <p className="text-[11px] text-slate-400 mt-0.5">Quality Evaluation Platform</p>
         </div>
-        <nav className="flex-1 px-3 py-4 space-y-1">
+        <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto">
           {renderNavItems()}
         </nav>
-        <div className="px-6 py-4 border-t border-slate-700 text-xs text-slate-500">
+        <div className="px-5 py-3 border-t border-slate-700 text-xs text-slate-500">
           v1.0.0
         </div>
       </aside>
 
-      {/* Mobile top bar - hidden on desktop */}
-      <div className="md:hidden fixed top-0 left-0 right-0 z-50 bg-slate-800 text-white shadow-lg">
+      {/* Mobile top bar */}
+      <div className="fixed top-0 left-0 right-0 z-50 bg-slate-800 text-white shadow-lg md:hidden">
         <div className="flex items-center justify-between px-4 h-14">
           <h1 className="text-lg font-bold tracking-tight">Audio LLM Test</h1>
           <button
@@ -110,7 +110,19 @@ export default function App() {
 
       {/* Mobile menu overlay */}
       {mobileMenuOpen && (
-        <div className="md:hidden fixed inset-0 z-40 bg-slate-800 text-white pt-14 flex flex-col">
+        <div className="fixed inset-0 z-[60] bg-slate-800 text-white pt-14 flex flex-col md:hidden">
+          <div className="absolute top-0 left-0 right-0 h-14 flex items-center justify-between px-4">
+            <h1 className="text-lg font-bold tracking-tight">Audio LLM Test</h1>
+            <button
+              onClick={() => setMobileMenuOpen(false)}
+              className="p-2 rounded-lg hover:bg-slate-700 transition-colors"
+              aria-label="Close menu"
+            >
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
           <nav className="flex-1 px-3 py-4 space-y-1 overflow-auto">
             {renderNavItems(() => setMobileMenuOpen(false))}
           </nav>
@@ -120,7 +132,7 @@ export default function App() {
         </div>
       )}
 
-      {/* Main content - top padding on mobile for fixed bar */}
+      {/* Main content */}
       <main className="flex-1 overflow-auto pt-14 md:pt-0">
         <Routes>
           <Route path="/" element={<Dashboard />} />
