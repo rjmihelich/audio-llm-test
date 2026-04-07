@@ -111,58 +111,69 @@ export default function Results() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
-        <StatsCard
-          title="Total Tests"
-          value={s?.total_tests ?? "--"}
-          trend="neutral"
-        />
-        <StatsCard
-          title="Passed"
-          value={
-            s && s.completed > 0
-              ? `${s.completed - s.errors}`
-              : "--"
-          }
-          subtitle={`${s?.errors ?? 0} failed`}
-          trend="neutral"
-        />
-        <StatsCard
-          title="Pass Rate"
-          value={
-            s?.overall_pass_rate != null
-              ? `${(s.overall_pass_rate * 100).toFixed(0)}%`
-              : "--"
-          }
-          trend={
-            s?.overall_pass_rate != null
-              ? s.overall_pass_rate >= 0.8
-                ? "up"
-                : s.overall_pass_rate >= 0.5
-                  ? "neutral"
-                  : "down"
-              : "neutral"
-          }
-        />
-        <StatsCard
-          title="Mean Score"
-          value={
-            s?.overall_mean_score != null
-              ? s.overall_mean_score.toFixed(2)
-              : "--"
-          }
-          trend="neutral"
-        />
-        <StatsCard
-          title="Avg Latency"
-          value={
-            s?.mean_latency_ms != null
-              ? `${s.mean_latency_ms.toFixed(0)}ms`
-              : "--"
-          }
-          trend="neutral"
-        />
-      </div>
+      {(() => {
+        const totalTests = s?.total_tests ?? 0;
+        const passedCount = s?.overall_pass_rate != null && totalTests > 0
+          ? Math.round(s.overall_pass_rate * totalTests)
+          : null;
+        const failedCount = passedCount != null ? totalTests - passedCount : null;
+        const completedCases = r?.completed_cases;
+        const totalCases = r?.total_cases;
+        const completionLabel = completedCases != null && totalCases != null && totalCases > 0
+          ? `${completedCases}/${totalCases} ran`
+          : undefined;
+        return (
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
+            <StatsCard
+              title="Total Tests"
+              value={s?.total_tests ?? "--"}
+              subtitle={completionLabel}
+              trend="neutral"
+            />
+            <StatsCard
+              title="Passed"
+              value={passedCount ?? "--"}
+              subtitle={failedCount != null ? `${failedCount} failed` : undefined}
+              trend="neutral"
+            />
+            <StatsCard
+              title="Pass Rate"
+              value={
+                s?.overall_pass_rate != null
+                  ? `${(s.overall_pass_rate * 100).toFixed(0)}%`
+                  : "--"
+              }
+              trend={
+                s?.overall_pass_rate != null
+                  ? s.overall_pass_rate >= 0.8
+                    ? "up"
+                    : s.overall_pass_rate >= 0.5
+                      ? "neutral"
+                      : "down"
+                  : "neutral"
+              }
+            />
+            <StatsCard
+              title="Mean Score"
+              value={
+                s?.overall_mean_score != null
+                  ? s.overall_mean_score.toFixed(2)
+                  : "--"
+              }
+              trend="neutral"
+            />
+            <StatsCard
+              title="Avg Latency"
+              value={
+                s?.mean_latency_ms != null
+                  ? `${s.mean_latency_ms.toFixed(0)}ms`
+                  : "--"
+              }
+              trend="neutral"
+            />
+          </div>
+        );
+      })()}
 
       {/* Tabs */}
       <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit mb-6">
