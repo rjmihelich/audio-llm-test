@@ -194,7 +194,7 @@ function BackendComparison({ data }: { data: Array<Record<string, unknown>> }) {
   return (
     <ChartCard title="LLM Backend Comparison" subtitle="Pass rate and score by LLM backend">
       <ResponsiveContainer width="100%" height={280}>
-        <BarChart data={chartData} layout="vertical" margin={{ top: 10, right: 20, left: 80, bottom: 0 }}>
+        <BarChart data={chartData} layout="vertical" margin={{ top: 10, right: 20, left: 40, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
           <XAxis type="number" domain={[0, 100]} tickFormatter={(v) => `${v}%`} tick={{ fontSize: 12 }} />
           <YAxis type="category" dataKey="backend" tick={{ fontSize: 11 }} width={75} />
@@ -351,10 +351,10 @@ export default function Dashboard() {
 
   if (isLoading) {
     return (
-      <div className="p-8">
+      <div className="p-4 sm:p-6 lg:p-8">
         <div className="animate-pulse space-y-4">
           <div className="h-8 bg-gray-200 rounded w-48" />
-          <div className="grid grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             {[...Array(4)].map((_, i) => <div key={i} className="h-24 bg-gray-200 rounded-xl" />)}
           </div>
           <div className="grid grid-cols-2 gap-4">
@@ -369,8 +369,8 @@ export default function Dashboard() {
   const hasData = d && d.total_cases > 0;
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-6">
-      <div className="flex items-center justify-between">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Performance Dashboard</h2>
           <p className="text-sm text-gray-500 mt-0.5">
@@ -504,7 +504,7 @@ export default function Dashboard() {
               </Link>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-sm min-w-[600px]">
                 <thead>
                   <tr className="text-left text-gray-500 border-b border-gray-100">
                     <th className="px-5 py-2.5 font-medium">Run</th>

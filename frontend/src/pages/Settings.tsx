@@ -1,6 +1,12 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { fetchSettings, updateSettings, type SettingsResponse } from "../api/client";
+import {
+  fetchSettings,
+  updateSettings,
+  fetchKeyStatus,
+  type SettingsResponse,
+  type KeyStatusResponse,
+} from "../api/client";
 
 interface KeyField {
   key: keyof SettingsResponse;
@@ -33,6 +39,24 @@ const KEY_FIELDS: KeyField[] = [
     label: "ElevenLabs",
     placeholder: "xi-...",
     description: "Premium TTS voice generation",
+  },
+  {
+    key: "deepgram_api_key",
+    label: "Deepgram",
+    placeholder: "dg-...",
+    description: "Deepgram STT/ASR engine",
+  },
+  {
+    key: "azure_speech_key",
+    label: "Azure Speech",
+    placeholder: "your-azure-key",
+    description: "Azure Cognitive Services Speech (key)",
+  },
+  {
+    key: "azure_speech_region",
+    label: "Azure Region",
+    placeholder: "eastus",
+    description: "Azure Speech region (e.g. eastus, westus2)",
   },
 ];
 
@@ -160,6 +184,11 @@ export default function Settings() {
     queryFn: fetchSettings,
   });
 
+  const { data: keyStatus } = useQuery<KeyStatusResponse>({
+    queryKey: ["key-status"],
+    queryFn: fetchKeyStatus,
+  });
+
   const mutation = useMutation({
     mutationFn: updateSettings,
     onSuccess: (data) => {
@@ -204,7 +233,7 @@ export default function Settings() {
   }
 
   return (
-    <div className="p-8 max-w-3xl">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-3xl">
       <div className="mb-8">
         <h1 className="text-2xl font-bold text-gray-900">Settings</h1>
         <p className="text-sm text-gray-500 mt-1">
@@ -228,7 +257,7 @@ export default function Settings() {
 
           return (
             <div key={field.key} className="px-6 py-5">
-              <div className="flex items-center justify-between mb-2">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-2">
                 <div className="flex items-center gap-2.5">
                   <StatusDot configured={isConfigured} />
                   <label className="text-sm font-medium text-gray-900">
@@ -288,7 +317,7 @@ export default function Settings() {
           </h2>
         </div>
         <div className="px-6 py-5">
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between mb-2">
             <div className="flex items-center gap-2.5">
               <StatusDot configured={true} />
               <label className="text-sm font-medium text-gray-900">
@@ -308,6 +337,111 @@ export default function Settings() {
             value={ollamaUrl ?? ""}
             onChange={(e) => setOllamaUrl(e.target.value)}
           />
+        </div>
+      </div>
+
+      {/* Default Backends */}
+      <div className="mt-6 bg-white rounded-xl border border-gray-200 shadow-sm">
+        <div className="px-6 py-4 border-b border-gray-100">
+          <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">
+            Default Backends
+          </h2>
+        </div>
+        <div className="px-6 py-5 space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-900 mb-1">
+              Default LLM Backend
+            </label>
+            <select
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg
+                         focus:ring-2 focus:ring-slate-500 focus:border-slate-500"
+              value={formValues["default_llm_backend"] ?? settings?.default_llm_backend ?? ""}
+              onChange={(e) =>
+                setFormValues((prev) => ({ ...prev, default_llm_backend: e.target.value }))
+              }
+            >
+              <option value="">-- select --</option>
+              <option value="openai">OpenAI (GPT-4o)</option>
+              <option value="anthropic">Anthropic (Claude)</option>
+              <option value="google">Google (Gemini)</option>
+              <option value="ollama">Ollama (local)</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-900 mb-1">
+              Default STT Backend
+            </label>
+            <select
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg
+                         focus:ring-2 focus:ring-slate-500 focus:border-slate-500"
+              value={formValues["default_stt_backend"] ?? settings?.default_stt_backend ?? ""}
+              onChange={(e) =>
+                setFormValues((prev) => ({ ...prev, default_stt_backend: e.target.value }))
+              }
+            >
+              <option value="">-- select --</option>
+              <option value="openai">OpenAI Whisper</option>
+              <option value="deepgram">Deepgram</option>
+              <option value="azure">Azure Speech</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* Provider Status */}
+      <div className="mt-6 bg-white rounded-xl border border-gray-200 shadow-sm">
+        <div className="px-6 py-4 border-b border-gray-100">
+          <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">
+            Provider Status
+          </h2>
+          <p className="text-xs text-gray-400 mt-1">
+            API key configuration status from the backend.
+          </p>
+        </div>
+        <div className="px-6 py-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {(
+            [
+              ["OpenAI", keyStatus?.openai],
+              ["Anthropic", keyStatus?.anthropic],
+              ["Google", keyStatus?.google],
+              ["ElevenLabs", keyStatus?.elevenlabs],
+              ["Deepgram", keyStatus?.deepgram],
+              ["Azure Speech", keyStatus?.azure],
+              ["Ollama", keyStatus?.ollama],
+            ] as [string, boolean | undefined][]
+          ).map(([name, ok]) => (
+            <div key={name} className="flex items-center gap-2">
+              <StatusDot configured={!!ok} />
+              <span className="text-sm text-gray-700">{name}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Local / Free Providers */}
+      <div className="mt-6 bg-white rounded-xl border border-gray-200 shadow-sm">
+        <div className="px-6 py-4 border-b border-gray-100">
+          <h2 className="text-sm font-semibold text-gray-700 uppercase tracking-wider">
+            Local / Free Providers
+          </h2>
+        </div>
+        <div className="divide-y divide-gray-50">
+          {([
+            { name: "Piper TTS", note: "Installed", badge: "bg-green-100 text-green-700" },
+            { name: "Edge TTS", note: "Available (free)", badge: "bg-blue-100 text-blue-700" },
+            { name: "gTTS", note: "Available (free)", badge: "bg-blue-100 text-blue-700" },
+            { name: "eSpeak / System", note: "Available (built-in)", badge: "bg-gray-100 text-gray-600" },
+            { name: "SLURP Dataset", note: "Data source", badge: "bg-purple-100 text-purple-700" },
+          ]).map((p) => (
+            <div key={p.name} className="px-6 py-3 flex items-center justify-between">
+              <span className="text-sm font-medium text-gray-900">{p.name}</span>
+              <span
+                className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase ${p.badge}`}
+              >
+                {p.note}
+              </span>
+            </div>
+          ))}
         </div>
       </div>
 
@@ -382,7 +516,7 @@ export default function Settings() {
             Platform Config
           </h2>
         </div>
-        <div className="px-6 py-4 grid grid-cols-2 gap-4">
+        <div className="px-6 py-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div>
             <p className="text-xs text-gray-500">Sample Rate</p>
             <p className="text-sm font-medium text-gray-900">

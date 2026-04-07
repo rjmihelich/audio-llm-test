@@ -43,9 +43,12 @@ export interface RunResponse {
   total_cases: number;
   completed_cases: number;
   failed_cases: number;
+  skipped_cases: number;
   progress_pct: number;
   started_at: string | null;
   completed_at: string | null;
+  error_message: string | null;
+  error_details: Record<string, unknown> | null;
 }
 
 export interface StatsResponse {
@@ -74,6 +77,7 @@ export interface ResultResponse {
   pipeline_type: string;
   llm_backend: string;
   snr_db: number;
+  speech_level_db: number;
   delay_ms: number;
   gain_db: number;
   noise_type: string;
@@ -87,12 +91,14 @@ export interface ResultResponse {
   evaluator_type: string | null;
   total_latency_ms: number | null;
   error: string | null;
+  error_stage: string | null;
 }
 
 export interface SweepConfigRequest {
   name: string;
   description?: string;
   snr_db_values: number[];
+  speech_level_db_values?: number[];
   noise_types: string[];
   echo: {
     delay_ms_values: number[];
@@ -244,6 +250,17 @@ export interface GenerateWavsResponse {
   errors: string[];
 }
 
+export interface SpeechStatsResponse {
+  by_provider: Record<string, { ready: number; failed: number; pending: number; generating: number }>;
+  totals: { ready: number; failed: number; pending: number; generating: number };
+}
+
+export interface CorpusStatsResponse {
+  by_category: Record<string, number>;
+  by_language: Record<string, number>;
+  total: number;
+}
+
 export function generateWavs(
   req: GenerateWavsRequest
 ): Promise<GenerateWavsResponse> {
@@ -251,6 +268,92 @@ export function generateWavs(
     method: "POST",
     body: JSON.stringify(req),
   });
+}
+
+export function fetchSpeechStats(): Promise<SpeechStatsResponse> {
+  return request("/speech/stats");
+}
+
+export function retryFailedSamples(
+  providers?: string[]
+): Promise<GenerateWavsResponse> {
+  return request("/speech/generate-wavs/retry", {
+    method: "POST",
+    body: JSON.stringify({ providers }),
+  });
+}
+
+export function fetchCorpusStats(): Promise<CorpusStatsResponse> {
+  return request("/speech/corpus/stats");
+}
+
+export interface SampleBrowseItem {
+  id: string;
+  status: string;
+  file_path: string;
+  duration_s: number;
+  sample_rate: number;
+  created_at: string;
+  voice_name: string;
+  voice_id_str: string;
+  provider: string;
+  gender: string;
+  accent: string | null;
+  voice_language: string;
+  text: string;
+  category: string;
+  expected_intent: string | null;
+  expected_action: string | null;
+  corpus_language: string;
+}
+
+export interface SampleBrowsePage {
+  items: SampleBrowseItem[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface SampleFilters {
+  providers: string[];
+  genders: string[];
+  languages: string[];
+  categories: string[];
+  accents: string[];
+  statuses: string[];
+}
+
+export function browseSamples(filters?: {
+  status?: string;
+  provider?: string;
+  gender?: string;
+  language?: string;
+  corpus_language?: string;
+  category?: string;
+  accent?: string;
+  voice_name?: string;
+  text_search?: string;
+  sort_by?: string;
+  sort_dir?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<SampleBrowsePage> {
+  const params = new URLSearchParams();
+  if (filters) {
+    Object.entries(filters).forEach(([k, v]) => {
+      if (v !== undefined && v !== "") params.set(k, String(v));
+    });
+  }
+  const qs = params.toString();
+  return request(`/speech/samples${qs ? `?${qs}` : ""}`);
+}
+
+export function fetchSampleFilters(): Promise<SampleFilters> {
+  return request("/speech/samples/filters");
+}
+
+export function getSampleAudioUrl(sampleId: string): string {
+  return `/api/speech/samples/${sampleId}/audio`;
 }
 
 // ---------------------------------------------------------------------------
@@ -279,6 +382,12 @@ export function listTestSuites(): Promise<TestSuiteResponse[]> {
   return request("/tests/suites");
 }
 
+export function deleteTestSuite(
+  suiteId: string
+): Promise<{ status: string; id: string }> {
+  return request(`/tests/suites/${suiteId}`, { method: "DELETE" });
+}
+
 // ---------------------------------------------------------------------------
 // Runs
 // ---------------------------------------------------------------------------
@@ -303,6 +412,11 @@ export function getRun(runId: string): Promise<RunResponse> {
 
 export function cancelRun(runId: string): Promise<void> {
   return request(`/runs/${runId}`, { method: "DELETE" });
+}
+
+export async function activeRunCount(): Promise<number> {
+  const runs = await listRuns();
+  return runs.filter((r) => r.status === "running").length;
 }
 
 // ---------------------------------------------------------------------------
@@ -361,8 +475,16 @@ export interface DashboardResponse {
   overall_mean_score: number | null;
   mean_latency_ms: number | null;
   accuracy_by_snr: Array<Record<string, unknown>> | null;
+  accuracy_by_speech_level: Array<Record<string, unknown>> | null;
   accuracy_by_noise: Array<Record<string, unknown>> | null;
   accuracy_by_backend: Array<Record<string, unknown>> | null;
+  speech_level_heatmap: {
+    row_labels: number[];
+    col_labels: number[];
+    values: Array<Array<number | null>>;
+    row_name: string;
+    col_name: string;
+  } | null;
   echo_heatmap: {
     row_labels: number[];
     col_labels: number[];
@@ -389,6 +511,7 @@ export interface KeyStatusResponse {
   anthropic: boolean;
   elevenlabs: boolean;
   deepgram: boolean;
+  azure: boolean;
   ollama: boolean;
 }
 
@@ -401,6 +524,11 @@ export interface SettingsResponse {
   google_api_key: string | null;
   anthropic_api_key: string | null;
   elevenlabs_api_key: string | null;
+  deepgram_api_key: string | null;
+  azure_speech_key: string | null;
+  azure_speech_region: string | null;
+  default_llm_backend: string | null;
+  default_stt_backend: string | null;
   ollama_base_url: string;
   default_sample_rate: number;
   max_concurrent_workers: number;

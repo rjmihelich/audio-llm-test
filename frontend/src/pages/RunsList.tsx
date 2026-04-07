@@ -55,7 +55,7 @@ export default function RunsList() {
   }
 
   return (
-    <div className="p-8 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Runs & Results</h2>
         <p className="text-sm text-gray-500 mt-1">
@@ -80,7 +80,7 @@ export default function RunsList() {
               key={run.id}
               className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow"
             >
-              <div className="p-5 flex items-center gap-4">
+              <div className="p-4 sm:p-5 space-y-3 sm:space-y-0 sm:flex sm:items-center sm:gap-4">
                 {/* Status dot */}
                 <span
                   className={`w-3 h-3 rounded-full shrink-0 ${
@@ -106,15 +106,20 @@ export default function RunsList() {
                       {run.status}
                     </span>
                   </div>
-                  <div className="flex items-center gap-4 mt-1 text-xs text-gray-500">
+                  <div className="flex flex-wrap items-center gap-2 sm:gap-4 mt-1 text-xs text-gray-500">
                     <span>Started: {formatDate(run.started_at)}</span>
                     <span>Duration: {duration(run)}</span>
                     <span>Suite: {run.test_suite_id.slice(0, 8)}</span>
                   </div>
+                  {run.error_message && (
+                    <p className="mt-1 text-xs text-red-500 truncate max-w-lg" title={run.error_message}>
+                      {run.error_message}
+                    </p>
+                  )}
                 </div>
 
                 {/* Stats */}
-                <div className="flex items-center gap-6 shrink-0">
+                <div className="flex flex-wrap items-center gap-3 sm:gap-6 sm:shrink-0">
                   <div className="text-center">
                     <p className="text-lg font-bold text-gray-900">
                       {run.completed_cases}
@@ -133,7 +138,7 @@ export default function RunsList() {
                   </div>
 
                   {/* Progress bar */}
-                  <div className="w-24">
+                  <div className="w-full sm:w-24">
                     <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
                       <div
                         className={`h-full rounded-full ${

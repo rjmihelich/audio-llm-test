@@ -1,4 +1,7 @@
+import { useState } from "react";
 import { NavLink, Routes, Route } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { listRuns } from "./api/client";
 import Dashboard from "./pages/Dashboard";
 import SpeechCorpus from "./pages/SpeechCorpus";
 import TestSuites from "./pages/TestSuites";
@@ -6,10 +9,12 @@ import RunMonitor from "./pages/RunMonitor";
 import Results from "./pages/Results";
 import RunsList from "./pages/RunsList";
 import Settings from "./pages/Settings";
+import AudioBrowser from "./pages/AudioBrowser";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: "\u{1F4CA}" },
   { to: "/corpus", label: "Speech Corpus", icon: "\u{1F399}" },
+  { to: "/browser", label: "Audio Browser", icon: "\u{1F50A}" },
   { to: "/tests", label: "Test Suites", icon: "\u{1F9EA}" },
   { to: "/runs", label: "Runs & Results", icon: "\u{1F3AF}" },
   { to: "/settings", label: "Settings", icon: "\u{2699}" },
@@ -17,56 +22,110 @@ const navItems = [
 ];
 
 export default function App() {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const { data: runs } = useQuery({
+    queryKey: ["runs"],
+    queryFn: listRuns,
+    refetchInterval: 5000,
+  });
+  const activeRunCount = runs?.filter((r) => r.status === "running").length ?? 0;
+
+  const renderNavItems = (onItemClick?: () => void) =>
+    navItems.map((item) =>
+      (item as { external?: boolean }).external ? (
+        <a
+          key={item.to}
+          href="http://localhost:5174"
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={onItemClick}
+          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-700/50 hover:text-white transition-colors"
+        >
+          <span className="text-base">{item.icon}</span>
+          {item.label}
+        </a>
+      ) : (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          end={item.to === "/"}
+          onClick={onItemClick}
+          className={({ isActive }) =>
+            `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+              isActive
+                ? "bg-slate-700 text-white"
+                : "text-slate-300 hover:bg-slate-700/50 hover:text-white"
+            }`
+          }
+        >
+          <span className="text-base">{item.icon}</span>
+          {item.label}
+          {item.to === "/runs" && activeRunCount > 0 && (
+            <span className="ml-auto inline-flex items-center justify-center w-5 h-5 text-[10px] font-bold text-white bg-red-500 rounded-full">
+              {activeRunCount}
+            </span>
+          )}
+        </NavLink>
+      )
+    );
+
   return (
     <div className="flex h-screen bg-gray-50">
-      {/* Sidebar */}
-      <aside className="w-64 bg-slate-800 text-white flex flex-col shrink-0">
+      {/* Desktop sidebar - hidden on mobile */}
+      <aside className="hidden md:flex w-64 bg-slate-800 text-white flex-col shrink-0">
         <div className="px-6 py-5 border-b border-slate-700">
           <h1 className="text-lg font-bold tracking-tight">Audio LLM Test</h1>
           <p className="text-xs text-slate-400 mt-0.5">Quality Evaluation Platform</p>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1">
-          {navItems.map((item) =>
-            (item as { external?: boolean }).external ? (
-              <a
-                key={item.to}
-                href="http://localhost:5174"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-700/50 hover:text-white transition-colors"
-              >
-                <span className="text-base">{item.icon}</span>
-                {item.label}
-              </a>
-            ) : (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                end={item.to === "/"}
-                className={({ isActive }) =>
-                  `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                    isActive
-                      ? "bg-slate-700 text-white"
-                      : "text-slate-300 hover:bg-slate-700/50 hover:text-white"
-                  }`
-                }
-              >
-                <span className="text-base">{item.icon}</span>
-                {item.label}
-              </NavLink>
-            )
-          )}
+          {renderNavItems()}
         </nav>
         <div className="px-6 py-4 border-t border-slate-700 text-xs text-slate-500">
           v1.0.0
         </div>
       </aside>
 
-      {/* Main content */}
-      <main className="flex-1 overflow-auto">
+      {/* Mobile top bar - hidden on desktop */}
+      <div className="md:hidden fixed top-0 left-0 right-0 z-50 bg-slate-800 text-white shadow-lg">
+        <div className="flex items-center justify-between px-4 h-14">
+          <h1 className="text-lg font-bold tracking-tight">Audio LLM Test</h1>
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="p-2 rounded-lg hover:bg-slate-700 transition-colors"
+            aria-label={mobileMenuOpen ? "Close menu" : "Open menu"}
+          >
+            {mobileMenuOpen ? (
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            ) : (
+              <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Mobile menu overlay */}
+      {mobileMenuOpen && (
+        <div className="md:hidden fixed inset-0 z-40 bg-slate-800 text-white pt-14 flex flex-col">
+          <nav className="flex-1 px-3 py-4 space-y-1 overflow-auto">
+            {renderNavItems(() => setMobileMenuOpen(false))}
+          </nav>
+          <div className="px-6 py-4 border-t border-slate-700 text-xs text-slate-500">
+            v1.0.0
+          </div>
+        </div>
+      )}
+
+      {/* Main content - top padding on mobile for fixed bar */}
+      <main className="flex-1 overflow-auto pt-14 md:pt-0">
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/corpus" element={<SpeechCorpus />} />
+          <Route path="/browser" element={<AudioBrowser />} />
           <Route path="/tests" element={<TestSuites />} />
           <Route path="/runs" element={<RunsList />} />
           <Route path="/runs/:id" element={<RunMonitor />} />

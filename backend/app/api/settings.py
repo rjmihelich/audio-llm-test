@@ -33,6 +33,8 @@ class SettingsResponse(BaseModel):
     anthropic_api_key: str | None = None
     elevenlabs_api_key: str | None = None
     deepgram_api_key: str | None = None
+    azure_speech_key: str | None = None
+    azure_speech_region: str = "eastus"
     ollama_base_url: str = ""
     default_sample_rate: int = 16000
     max_concurrent_workers: int = 50
@@ -47,6 +49,8 @@ class UpdateKeysRequest(BaseModel):
     anthropic_api_key: str | None = None
     elevenlabs_api_key: str | None = None
     deepgram_api_key: str | None = None
+    azure_speech_key: str | None = None
+    azure_speech_region: str | None = None
     ollama_base_url: str | None = None
     default_llm_backend: str | None = None
     default_stt_backend: str | None = None
@@ -69,6 +73,8 @@ _KEY_TO_ENV = {
     "anthropic_api_key": "ALT_ANTHROPIC_API_KEY",
     "elevenlabs_api_key": "ALT_ELEVENLABS_API_KEY",
     "deepgram_api_key": "ALT_DEEPGRAM_API_KEY",
+    "azure_speech_key": "ALT_AZURE_SPEECH_KEY",
+    "azure_speech_region": "ALT_AZURE_SPEECH_REGION",
     "ollama_base_url": "ALT_OLLAMA_BASE_URL",
     "default_llm_backend": "ALT_DEFAULT_LLM_BACKEND",
     "default_stt_backend": "ALT_DEFAULT_STT_BACKEND",
@@ -126,6 +132,7 @@ class KeyStatusResponse(BaseModel):
     anthropic: bool = False
     elevenlabs: bool = False
     deepgram: bool = False
+    azure: bool = False
     ollama: bool = True  # Always available if URL is set
 
 
@@ -138,6 +145,7 @@ async def get_key_status():
         anthropic=_is_valid_key(settings.anthropic_api_key),
         elevenlabs=_is_valid_key(settings.elevenlabs_api_key),
         deepgram=_is_valid_key(settings.deepgram_api_key),
+        azure=_is_valid_key(settings.azure_speech_key),
         ollama=bool(settings.ollama_base_url),
     )
 
@@ -151,6 +159,8 @@ async def get_settings():
         anthropic_api_key=_mask(settings.anthropic_api_key),
         elevenlabs_api_key=_mask(settings.elevenlabs_api_key),
         deepgram_api_key=_mask(settings.deepgram_api_key),
+        azure_speech_key=_mask(settings.azure_speech_key),
+        azure_speech_region=settings.azure_speech_region,
         ollama_base_url=settings.ollama_base_url,
         default_sample_rate=settings.default_sample_rate,
         max_concurrent_workers=settings.max_concurrent_workers,
@@ -180,6 +190,12 @@ async def update_settings(req: UpdateKeysRequest):
     if req.deepgram_api_key is not None:
         settings.deepgram_api_key = req.deepgram_api_key
         updates["deepgram_api_key"] = req.deepgram_api_key
+    if req.azure_speech_key is not None:
+        settings.azure_speech_key = req.azure_speech_key
+        updates["azure_speech_key"] = req.azure_speech_key
+    if req.azure_speech_region is not None:
+        settings.azure_speech_region = req.azure_speech_region
+        updates["azure_speech_region"] = req.azure_speech_region
     if req.ollama_base_url is not None:
         settings.ollama_base_url = req.ollama_base_url
         updates["ollama_base_url"] = req.ollama_base_url

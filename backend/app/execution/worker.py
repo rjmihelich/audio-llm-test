@@ -18,6 +18,7 @@ from ..models.test import TestCase, TestSuite
 from ..models.speech import SpeechSample, CorpusEntry, Voice
 from ..execution.scheduler import TestScheduler, TestCaseConfig, TestResultRecord
 from ..llm.openai_audio import OpenAIAudioBackend
+from ..llm.openai_realtime import OpenAIRealtimeBackend
 from ..llm.gemini import GeminiBackend
 from ..llm.anthropic_backend import AnthropicBackend
 from ..llm.ollama import OllamaBackend
@@ -48,6 +49,11 @@ def _init_backend(backend_key: str):
         if model:
             kwargs["model"] = model
         return OpenAIAudioBackend(**kwargs)
+    elif prefix == "openai-realtime":
+        kwargs = {"api_key": settings.openai_api_key}
+        if model:
+            kwargs["model"] = model
+        return OpenAIRealtimeBackend(**kwargs)
     elif prefix == "gemini":
         kwargs = {"api_key": settings.google_api_key}
         if model:
@@ -125,11 +131,36 @@ async def run_test_suite(ctx: dict, run_id: str):
             # 5. Initialize LLM backends
             unique_backends = {tc.llm_backend for tc in test_cases}
             backends: dict[str, object] = {}
+            init_errors: list[str] = []
             for backend_key in unique_backends:
                 try:
                     backends[backend_key] = _init_backend(backend_key)
+                    logger.info(f"Backend initialized: {backend_key}")
                 except Exception as e:
-                    logger.error(f"Failed to init backend {backend_key}: {e}")
+                    error_msg = f"Failed to init backend '{backend_key}': {type(e).__name__}: {e}"
+                    logger.error(error_msg, exc_info=True)
+                    init_errors.append(error_msg)
+                    await broadcast_progress(run_id, {
+                        "type": "error",
+                        "error": error_msg,
+                        "error_stage": "backend_init",
+                    })
+
+            if not backends:
+                error_msg = f"No backends initialized successfully. Errors: {'; '.join(init_errors)}"
+                logger.error(error_msg)
+                test_run.status = "failed"
+                test_run.completed_at = datetime.utcnow()
+                test_run.error_message = error_msg
+                test_run.error_details = {"init_errors": init_errors}
+                await session.commit()
+                await broadcast_progress(run_id, {"type": "error", "error": error_msg})
+                return
+
+            # Build a quick lookup: test_case_id -> backend key
+            case_backend_map: dict[str, str] = {
+                str(tc.id): tc.llm_backend for tc in test_cases
+            }
 
             # 6. Initialize evaluators
             # Use the first OpenAI backend as the judge LLM, or create one
@@ -150,17 +181,30 @@ async def run_test_suite(ctx: dict, run_id: str):
             # 7. Initialize ASR backend if any test case uses asr_text pipeline
             asr_backend = None
             if any(tc.pipeline == "asr_text" for tc in test_cases):
-                if settings.default_stt_backend.startswith("deepgram") and settings.deepgram_api_key:
-                    asr_backend = DeepgramSTTBackend(api_key=settings.deepgram_api_key)
-                elif settings.openai_api_key and not settings.openai_api_key.startswith("sk-..."):
-                    asr_backend = WhisperAPIBackend(api_key=settings.openai_api_key)
-                else:
-                    # Fall back to local Whisper (free, no API key needed)
-                    logger.info("No valid STT API key found — using local Whisper")
-                    asr_backend = WhisperLocalBackend(model_size="base")
-                    # Pre-load the model to avoid concurrent loading issues
-                    asr_backend._ensure_model()
-                    logger.info("Whisper model loaded successfully")
+                try:
+                    if settings.default_stt_backend.startswith("deepgram") and settings.deepgram_api_key:
+                        asr_backend = DeepgramSTTBackend(api_key=settings.deepgram_api_key)
+                        logger.info("ASR backend: Deepgram Nova-2")
+                    elif settings.openai_api_key and not settings.openai_api_key.startswith("sk-..."):
+                        asr_backend = WhisperAPIBackend(api_key=settings.openai_api_key)
+                        logger.info("ASR backend: Whisper API (OpenAI)")
+                    else:
+                        logger.info("No valid STT API key found — using local Whisper")
+                        asr_backend = WhisperLocalBackend(model_size="base")
+                        asr_backend._ensure_model()
+                        logger.info("ASR backend: Whisper Local (faster-whisper, base model)")
+                    await broadcast_progress(run_id, {
+                        "type": "info",
+                        "message": f"ASR backend ready: {type(asr_backend).__name__}",
+                    })
+                except Exception as e:
+                    error_msg = f"Failed to initialize ASR backend: {type(e).__name__}: {e}"
+                    logger.error(error_msg, exc_info=True)
+                    await broadcast_progress(run_id, {
+                        "type": "error",
+                        "error": error_msg,
+                        "error_stage": "asr_init",
+                    })
 
             # 8. Convert TestCase DB objects to TestCaseConfig
             test_case_configs: list[TestCaseConfig] = []
@@ -175,6 +219,7 @@ async def run_test_suite(ctx: dict, run_id: str):
                     expected_intent=corpus_entry.expected_intent or "" if corpus_entry else "",
                     expected_action=corpus_entry.expected_action if corpus_entry else None,
                     snr_db=tc.snr_db if tc.snr_db is not None else 10.0,
+                    speech_level_db=getattr(tc, "speech_level_db", None) or 0.0,
                     noise_type=tc.noise_type or "pink_lpf",
                     delay_ms=tc.delay_ms if tc.delay_ms is not None else 0.0,
                     gain_db=tc.gain_db if tc.gain_db is not None else -100.0,
@@ -189,6 +234,7 @@ async def run_test_suite(ctx: dict, run_id: str):
                 async with async_session() as result_session:
                     pr = record.pipeline_result
                     er = record.evaluation_result
+                    has_error = record.is_error
 
                     test_result = TestResult(
                         test_run_id=run_uuid,
@@ -196,10 +242,12 @@ async def run_test_suite(ctx: dict, run_id: str):
                         llm_response_text=pr.llm_response.text if pr.llm_response else None,
                         llm_latency_ms=pr.llm_response.latency_ms if pr.llm_response else None,
                         asr_transcript=pr.transcription.text if pr.transcription else None,
-                        evaluation_score=er.score if er else None,
-                        evaluation_passed=er.passed if er else None,
+                        evaluation_score=er.score if er else (0.0 if has_error else None),
+                        evaluation_passed=er.passed if er else (False if has_error else None),
                         evaluation_details_json=er.details if er else None,
                         evaluator_type=er.evaluator if er else None,
+                        error=pr.error,
+                        error_stage=record.error_stage,
                     )
                     result_session.add(test_result)
 
@@ -207,19 +255,26 @@ async def run_test_suite(ctx: dict, run_id: str):
                     tr = await result_session.get(TestRun, run_uuid)
                     if tr:
                         tr.completed_cases += 1
-                        if er and not er.passed:
+                        if has_error:
+                            tr.failed_cases += 1
+                        elif er and not er.passed:
                             tr.failed_cases += 1
                         tr.progress_pct = (tr.completed_cases / tr.total_cases * 100.0) if tr.total_cases > 0 else 0.0
 
                     await result_session.commit()
 
-                # Broadcast via WebSocket
-                await broadcast_progress(run_id, {
+                # Broadcast via WebSocket — include error details
+                ws_msg = {
                     "type": "result",
                     "test_case_id": record.test_case_id,
+                    "backend": case_backend_map.get(record.test_case_id, ""),
                     "score": er.score if er else None,
-                    "passed": er.passed if er else None,
-                })
+                    "passed": er.passed if er else False,
+                    "latency_ms": pr.llm_response.latency_ms if pr.llm_response else None,
+                    "error": pr.error,
+                    "error_stage": record.error_stage,
+                }
+                await broadcast_progress(run_id, ws_msg)
 
             def on_progress_callback(completed: int, total: int):
                 pct = (completed / total * 100.0) if total > 0 else 0.0
@@ -268,18 +323,27 @@ async def run_test_suite(ctx: dict, run_id: str):
             })
 
         except Exception as e:
+            import traceback
+            tb = traceback.format_exc()
             logger.exception(f"Test run failed: {run_id}")
             try:
                 await session.refresh(test_run)
                 test_run.status = "failed"
                 test_run.completed_at = datetime.utcnow()
+                test_run.error_message = f"{type(e).__name__}: {e}"
+                test_run.error_details = {
+                    "exception_type": type(e).__name__,
+                    "message": str(e),
+                    "traceback": tb,
+                }
                 await session.commit()
             except Exception:
                 logger.exception("Failed to update test run status to failed")
 
             await broadcast_progress(run_id, {
                 "type": "error",
-                "error": str(e),
+                "error": f"{type(e).__name__}: {e}",
+                "traceback": tb,
             })
 
     logger.info(f"Test run completed: {run_id}")

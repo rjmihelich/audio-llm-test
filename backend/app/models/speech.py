@@ -24,6 +24,8 @@ class ProviderEnum(str, enum.Enum):
     coqui = "coqui"
     bark = "bark"
     espeak = "espeak"
+    azure = "azure"
+    slurp = "slurp"
 
 
 class GenderEnum(str, enum.Enum):

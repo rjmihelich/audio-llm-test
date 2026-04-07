@@ -62,6 +62,10 @@ class SweepConfig(Base):
         UUID(as_uuid=True), ForeignKey("test_suites.id"), nullable=False
     )
     snr_db_values: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    speech_level_db_values: Mapped[list] = mapped_column(
+        JSON, nullable=False, default=lambda: [0.0],
+        comment="Speech gain levels in dB. 0=original, negative=quieter/whisper, positive=louder/shout.",
+    )
     delay_ms_values: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     gain_db_values: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     noise_types: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
@@ -83,6 +87,10 @@ class TestCase(Base):
         UUID(as_uuid=True), ForeignKey("speech_samples.id"), nullable=False
     )
     snr_db: Mapped[float | None] = mapped_column(Float, nullable=True)
+    speech_level_db: Mapped[float | None] = mapped_column(
+        Float, nullable=True, default=0.0,
+        comment="Digital gain applied to speech before mixing (dB). 0=original level.",
+    )
     delay_ms: Mapped[float | None] = mapped_column(Float, nullable=True)
     gain_db: Mapped[float | None] = mapped_column(Float, nullable=True)
     noise_type: Mapped[str | None] = mapped_column(String(100), nullable=True)

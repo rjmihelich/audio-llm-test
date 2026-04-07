@@ -33,6 +33,7 @@ class ResultResponse(BaseModel):
     pipeline_type: str
     llm_backend: str
     snr_db: float
+    speech_level_db: float
     delay_ms: float
     gain_db: float
     noise_type: str
@@ -46,6 +47,7 @@ class ResultResponse(BaseModel):
     evaluator_type: str | None = None
     total_latency_ms: float | None = None
     error: str | None = None
+    error_stage: str | None = None
 
 
 class StatsResponse(BaseModel):
@@ -90,6 +92,7 @@ async def _load_results_for_run(
             "pipeline_type": tc.pipeline,
             "llm_backend": tc.llm_backend,
             "snr_db": tc.snr_db,
+            "speech_level_db": getattr(tc, "speech_level_db", None) or 0.0,
             "delay_ms": tc.delay_ms,
             "gain_db": tc.gain_db,
             "noise_type": tc.noise_type,
@@ -102,7 +105,8 @@ async def _load_results_for_run(
             "eval_passed": tr.evaluation_passed,
             "evaluator_type": tr.evaluator_type,
             "total_latency_ms": tr.llm_latency_ms,
-            "error": (tr.evaluation_details_json or {}).get("error") if tr.evaluation_details_json else None,
+            "error": getattr(tr, "error", None) or ((tr.evaluation_details_json or {}).get("error") if tr.evaluation_details_json else None),
+            "error_stage": getattr(tr, "error_stage", None),
         })
     return records
 
@@ -151,6 +155,7 @@ async def query_results(
             pipeline_type=tc.pipeline,
             llm_backend=tc.llm_backend,
             snr_db=tc.snr_db or 0.0,
+            speech_level_db=getattr(tc, "speech_level_db", None) or 0.0,
             delay_ms=tc.delay_ms or 0.0,
             gain_db=tc.gain_db or 0.0,
             noise_type=tc.noise_type or "",
@@ -163,7 +168,8 @@ async def query_results(
             eval_passed=tr.evaluation_passed,
             evaluator_type=tr.evaluator_type,
             total_latency_ms=tr.llm_latency_ms,
-            error=(tr.evaluation_details_json or {}).get("error") if tr.evaluation_details_json else None,
+            error=getattr(tr, "error", None) or ((tr.evaluation_details_json or {}).get("error") if tr.evaluation_details_json else None),
+            error_stage=getattr(tr, "error_stage", None),
         )
         for tr, tc, ce in rows
     ]
@@ -177,9 +183,11 @@ class DashboardResponse(BaseModel):
     overall_mean_score: float | None
     mean_latency_ms: float | None
     accuracy_by_snr: list[dict] | None = None
+    accuracy_by_speech_level: list[dict] | None = None
     accuracy_by_noise: list[dict] | None = None
     accuracy_by_backend: list[dict] | None = None
     echo_heatmap: dict | None = None
+    speech_level_heatmap: dict | None = None
     latency_by_backend: list[dict] | None = None
     parameter_effects: dict | None = None
     run_history: list[dict] | None = None
@@ -230,6 +238,9 @@ async def get_dashboard_aggregate(
     # Accuracy by SNR
     snr_acc = accuracy_by_group(df, "snr_db") if "snr_db" in df.columns and df["snr_db"].nunique() > 1 else pd.DataFrame()
 
+    # Accuracy by speech level
+    speech_level_acc = accuracy_by_group(df, "speech_level_db") if "speech_level_db" in df.columns and df["speech_level_db"].nunique() > 1 else pd.DataFrame()
+
     # Accuracy by noise type
     noise_acc = accuracy_by_group(df, "noise_type") if "noise_type" in df.columns and df["noise_type"].nunique() > 1 else pd.DataFrame()
 
@@ -252,6 +263,22 @@ async def get_dashboard_aggregate(
                 "col_name": "gain_db",
             }
 
+    # Speech level heatmap (snr_db vs speech_level_db)
+    speech_level_heatmap = None
+    if "speech_level_db" in df.columns and "snr_db" in df.columns:
+        if df["speech_level_db"].nunique() > 1 and df["snr_db"].nunique() > 1:
+            pivot_sl = pivot_heatmap(df, "speech_level_db", "snr_db", value_col="eval_score")
+            speech_level_heatmap = {
+                "row_labels": [float(x) for x in pivot_sl.index.tolist()],
+                "col_labels": [float(x) for x in pivot_sl.columns.tolist()],
+                "values": [
+                    [None if pd.isna(v) else float(v) for v in row]
+                    for row in pivot_sl.values.tolist()
+                ],
+                "row_name": "speech_level_db",
+                "col_name": "snr_db",
+            }
+
     # Latency by backend
     latency_data = None
     if "total_latency_ms" in df.columns and "llm_backend" in df.columns:
@@ -262,7 +289,7 @@ async def get_dashboard_aggregate(
         latency_data = lat_groups.to_dict("records")
 
     # Parameter effects
-    factors = [c for c in ["snr_db", "delay_ms", "gain_db", "noise_type", "llm_backend", "pipeline_type"] if c in df.columns]
+    factors = [c for c in ["snr_db", "speech_level_db", "delay_ms", "gain_db", "noise_type", "llm_backend", "pipeline_type"] if c in df.columns]
     param_effects = parameter_effects_anova(df, factors) if factors else None
 
     # Run history: per-run pass rate over time
@@ -286,9 +313,11 @@ async def get_dashboard_aggregate(
         overall_mean_score=summary.get("overall_mean_score"),
         mean_latency_ms=summary.get("mean_latency_ms"),
         accuracy_by_snr=snr_acc.to_dict("records") if not snr_acc.empty else None,
+        accuracy_by_speech_level=speech_level_acc.to_dict("records") if not speech_level_acc.empty else None,
         accuracy_by_noise=noise_acc.to_dict("records") if not noise_acc.empty else None,
         accuracy_by_backend=backend_acc.to_dict("records") if not backend_acc.empty else None,
         echo_heatmap=echo_heatmap,
+        speech_level_heatmap=speech_level_heatmap,
         latency_by_backend=latency_data,
         parameter_effects=param_effects,
         run_history=run_history if run_history else None,
@@ -339,7 +368,7 @@ async def get_run_stats(
     backend_comparison = comparison_df.to_dict("records") if not comparison_df.empty else None
 
     # Parameter effects ANOVA
-    factors = [c for c in ["snr_db", "delay_ms", "gain_db", "noise_type", "llm_backend", "pipeline_type"] if c in df.columns]
+    factors = [c for c in ["snr_db", "speech_level_db", "delay_ms", "gain_db", "noise_type", "llm_backend", "pipeline_type"] if c in df.columns]
     param_effects = parameter_effects_anova(df, factors) if factors else None
 
     return StatsResponse(

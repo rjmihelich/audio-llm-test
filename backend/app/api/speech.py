@@ -6,10 +6,13 @@ import logging
 import traceback
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+import asyncio
+import json as json_mod
+
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import asc, desc, distinct, select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.config import settings
@@ -71,6 +74,33 @@ class SyncVoicesResponse(BaseModel):
     synced: int
     providers: list[str]
     errors: list[str]
+
+
+@router.get("/stats")
+async def speech_stats(
+    session: AsyncSession = Depends(get_session),
+):
+    """Return speech sample counts grouped by provider and status."""
+    stmt = (
+        select(
+            Voice.provider,
+            SpeechSample.status,
+            func.count().label("cnt"),
+        )
+        .join(Voice, SpeechSample.voice_id == Voice.id)
+        .group_by(Voice.provider, SpeechSample.status)
+    )
+    rows = (await session.execute(stmt)).all()
+
+    by_provider: dict[str, dict[str, int]] = {}
+    totals: dict[str, int] = {}
+    for provider, status, cnt in rows:
+        prov = provider.value if hasattr(provider, "value") else provider
+        stat = status.value if hasattr(status, "value") else status
+        by_provider.setdefault(prov, {})[stat] = cnt
+        totals[stat] = totals.get(stat, 0) + cnt
+
+    return {"by_provider": by_provider, "totals": totals}
 
 
 @router.post("/voices/sync", response_model=SyncVoicesResponse)
@@ -201,6 +231,21 @@ async def sync_voices(
     except Exception as e:
         errors.append(f"bark: {e}")
 
+    # Azure Cognitive Services Speech — paid, supports expressive styles
+    if settings.azure_speech_key:
+        try:
+            from backend.app.speech.tts_azure import AzureTTSProvider
+            azure_provider = AzureTTSProvider(
+                speech_key=settings.azure_speech_key,
+                speech_region=settings.azure_speech_region,
+            )
+            azure_voices = await azure_provider.list_voices()
+            await _insert_voices(azure_voices, "azure")
+        except ImportError:
+            errors.append("azure: azure-cognitiveservices-speech not installed (pip install azure-cognitiveservices-speech)")
+        except Exception as e:
+            errors.append(f"azure: {e}")
+
     # eSpeak / pyttsx3 — system TTS
     try:
         from backend.app.speech.tts_espeak import ESpeakTTSProvider
@@ -293,6 +338,24 @@ async def list_corpus(
         )
         for e in entries
     ]
+
+
+@router.get("/corpus/stats")
+async def corpus_stats(session: AsyncSession = Depends(get_session)):
+    # Query corpus_entries grouped by category
+    cat_stmt = select(CorpusEntry.category, func.count()).group_by(CorpusEntry.category)
+    cat_result = await session.execute(cat_stmt)
+    by_category = {row[0]: row[1] for row in cat_result.all()}
+
+    # Query by language
+    lang_stmt = select(CorpusEntry.language, func.count()).group_by(CorpusEntry.language)
+    lang_result = await session.execute(lang_stmt)
+    by_language = {row[0]: row[1] for row in lang_result.all()}
+
+    total_stmt = select(func.count()).select_from(CorpusEntry)
+    total = (await session.execute(total_stmt)).scalar() or 0
+
+    return {"by_category": by_category, "by_language": by_language, "total": total}
 
 
 class SeedCorpusRequest(BaseModel):
@@ -698,46 +761,57 @@ class GenerateWavsResponse(BaseModel):
     errors: list[str]
 
 
+_tts_provider_cache: dict[str, object] = {}
+
+
 def _load_tts_provider(provider_name: str):
-    """Instantiate a TTS provider by name."""
+    """Instantiate a TTS provider by name.  Cached so models stay loaded."""
+    if provider_name in _tts_provider_cache:
+        return _tts_provider_cache[provider_name]
+
+    provider = None
     if provider_name == "edge":
         from backend.app.speech.tts_edge import EdgeTTSProvider
-        return EdgeTTSProvider()
+        provider = EdgeTTSProvider()
     elif provider_name == "gtts":
         from backend.app.speech.tts_gtts import GTTSProvider
-        return GTTSProvider()
+        provider = GTTSProvider()
     elif provider_name == "espeak":
         from backend.app.speech.tts_espeak import ESpeakTTSProvider
-        return ESpeakTTSProvider()
+        provider = ESpeakTTSProvider()
     elif provider_name == "openai":
         from backend.app.speech.tts_openai import OpenAITTSProvider
-        return OpenAITTSProvider(api_key=settings.openai_api_key or "")
+        provider = OpenAITTSProvider(api_key=settings.openai_api_key or "")
     elif provider_name == "piper":
         from backend.app.speech.tts_piper import PiperTTSProvider
-        return PiperTTSProvider()
+        provider = PiperTTSProvider()
     elif provider_name == "coqui":
         from backend.app.speech.tts_coqui import CoquiTTSProvider
-        return CoquiTTSProvider()
+        provider = CoquiTTSProvider()
     elif provider_name == "bark":
         from backend.app.speech.tts_bark import BarkTTSProvider
-        return BarkTTSProvider()
-    else:
-        return None
+        provider = BarkTTSProvider()
+    elif provider_name == "azure":
+        from backend.app.speech.tts_azure import AzureTTSProvider
+        provider = AzureTTSProvider(
+            speech_key=getattr(settings, "azure_speech_key", "") or "",
+            speech_region=getattr(settings, "azure_speech_region", "") or "eastus",
+        )
+
+    if provider is not None:
+        _tts_provider_cache[provider_name] = provider
+    return provider
 
 
-@router.post("/generate-wavs", response_model=GenerateWavsResponse)
-async def generate_wavs(
+async def _build_generation_plan(
     request: GenerateWavsRequest,
-    session: AsyncSession = Depends(get_session),
-):
-    """Create sample records AND generate WAV files in one step.
+    session: AsyncSession,
+) -> tuple[list, list, dict[str, list]]:
+    """Build corpus × voice matrix and create pending SpeechSample records.
 
-    This combines synthesize + generate-direct: builds the corpus × voice
-    matrix, creates pending SpeechSample rows, then immediately renders
-    each WAV file to disk.
+    Returns (corpus_entries, voices, samples_by_provider).
     """
     from pathlib import Path
-    import soundfile as sf
 
     # --- Build corpus entries query ---
     corpus_stmt = select(CorpusEntry)
@@ -747,7 +821,7 @@ async def generate_wavs(
         corpus_stmt = corpus_stmt.where(CorpusEntry.language.in_(request.languages))
     if request.max_corpus:
         corpus_stmt = corpus_stmt.limit(request.max_corpus)
-    corpus_entries = (await session.execute(corpus_stmt)).scalars().all()
+    corpus_entries = list((await session.execute(corpus_stmt)).scalars().all())
 
     # --- Build voices query ---
     voice_stmt = select(Voice)
@@ -759,7 +833,7 @@ async def generate_wavs(
         voice_stmt = voice_stmt.where(Voice.language.in_(request.voice_languages))
     if request.max_voices:
         voice_stmt = voice_stmt.limit(request.max_voices)
-    voices = (await session.execute(voice_stmt)).scalars().all()
+    voices = list((await session.execute(voice_stmt)).scalars().all())
 
     if not corpus_entries:
         raise HTTPException(400, "No corpus entries matched your filters. Seed the corpus first.")
@@ -767,7 +841,7 @@ async def generate_wavs(
         raise HTTPException(400, "No voices matched your filters. Sync voices first.")
 
     # --- Filter to only providers we can actually generate with ---
-    supported_providers = {"edge", "gtts", "espeak", "openai", "piper", "coqui", "bark"}
+    supported_providers = {"edge", "gtts", "espeak", "openai", "piper", "coqui", "bark", "azure", "slurp"}
     voices = [
         v for v in voices
         if (v.provider.value if hasattr(v.provider, 'value') else v.provider) in supported_providers
@@ -779,17 +853,40 @@ async def generate_wavs(
     max_total = request.max_total
     total_possible = len(corpus_entries) * len(voices)
     if total_possible > max_total:
-        # Trim corpus to fit within cap
         max_corpus_for_cap = max(1, max_total // len(voices))
         corpus_entries = corpus_entries[:max_corpus_for_cap]
         logger.info(f"Capped corpus to {max_corpus_for_cap} entries (total would be {total_possible}, cap={max_total})")
 
-    # --- Create sample records ---
+    # --- Check existing samples: skip ready, reuse failed/pending ---
+    existing_stmt = select(SpeechSample).where(
+        SpeechSample.corpus_entry_id.in_([e.id for e in corpus_entries]),
+        SpeechSample.voice_id.in_([v.id for v in voices]),
+    )
+    existing_result = await session.execute(existing_stmt)
+    existing_map: dict[tuple, SpeechSample] = {}
+    for s in existing_result.scalars().all():
+        existing_map[(s.corpus_entry_id, s.voice_id)] = s
+
+    # --- Build samples list: skip ready, retry failed, create new ---
     samples_by_provider: dict[str, list[SpeechSample]] = {}
-    total = 0
+    skipped = 0
     for entry in corpus_entries:
         for voice in voices:
             provider_str = voice.provider.value if hasattr(voice.provider, 'value') else voice.provider
+            key = (entry.id, voice.id)
+            existing = existing_map.get(key)
+
+            if existing and existing.status == "ready":
+                skipped += 1
+                continue
+
+            if existing and existing.status in ("failed", "pending", "generating"):
+                # Reuse existing record — reset to pending for retry
+                existing.status = "pending"
+                samples_by_provider.setdefault(provider_str, []).append(existing)
+                continue
+
+            # Create new sample record
             file_path = str(
                 settings.audio_storage_path
                 / f"{provider_str}_{voice.voice_id}"
@@ -805,10 +902,26 @@ async def generate_wavs(
             )
             session.add(sample)
             samples_by_provider.setdefault(provider_str, []).append(sample)
-            total += 1
     await session.commit()
 
-    # --- Generate WAV files provider by provider ---
+    return corpus_entries, voices, samples_by_provider
+
+
+@router.post("/generate-wavs", response_model=GenerateWavsResponse)
+async def generate_wavs(
+    request: GenerateWavsRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """Create sample records AND generate WAV files in one step.
+
+    Returns final summary. For real-time progress, use POST /generate-wavs/stream.
+    """
+    import soundfile as sf
+    from pathlib import Path
+
+    _, _, samples_by_provider = await _build_generation_plan(request, session)
+
+    total = sum(len(s) for s in samples_by_provider.values())
     generated = 0
     failed = 0
     errors: list[str] = []
@@ -860,8 +973,335 @@ async def generate_wavs(
         total_queued=total,
         generated=generated,
         failed=failed,
-        errors=errors[:50],  # cap error list
+        errors=errors[:50],
     )
+
+
+@router.post("/generate-wavs/stream")
+async def generate_wavs_stream(
+    request: GenerateWavsRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """Generate WAV files with real-time Server-Sent Events progress.
+
+    Streams JSON events:
+      {"type":"planning", "message": "..."}
+      {"type":"start",    "total": N, "skipped": N}
+      {"type":"loading",  "provider": "piper", "message": "Loading model..."}
+      {"type":"progress", "generated": N, "failed": N, "total": N, "current": "voice/text...", "pct": 50.0}
+      {"type":"error",    "message": "...", "generated": N, "failed": N, "total": N}
+      {"type":"complete", "generated": N, "failed": N, "total": N, "errors": [...]}
+    """
+    import soundfile as sf
+    from pathlib import Path
+
+    # We move ALL work inside the generator so the SSE stream opens immediately
+    # and the client gets feedback before the planning/model-loading phases.
+
+    async def event_stream():
+        generated = 0
+        failed = 0
+        errors: list[str] = []
+
+        # --- Phase 1: planning (DB queries, dedup) ---
+        yield f"data: {json_mod.dumps({'type': 'planning', 'message': 'Building generation plan...'})}\n\n"
+
+        try:
+            _, _, samples_by_provider = await _build_generation_plan(request, session)
+        except HTTPException as e:
+            yield f"data: {json_mod.dumps({'type': 'error', 'message': e.detail, 'generated': 0, 'failed': 0, 'total': 0})}\n\n"
+            yield f"data: {json_mod.dumps({'type': 'complete', 'generated': 0, 'failed': 0, 'total': 0, 'errors': [e.detail]})}\n\n"
+            return
+        except Exception as e:
+            msg = f"Planning failed: {type(e).__name__}: {e}"
+            yield f"data: {json_mod.dumps({'type': 'error', 'message': msg, 'generated': 0, 'failed': 0, 'total': 0})}\n\n"
+            yield f"data: {json_mod.dumps({'type': 'complete', 'generated': 0, 'failed': 0, 'total': 0, 'errors': [msg]})}\n\n"
+            return
+
+        total = sum(len(s) for s in samples_by_provider.values())
+
+        # Send start event
+        yield f"data: {json_mod.dumps({'type': 'start', 'total': total})}\n\n"
+
+        if total == 0:
+            yield f"data: {json_mod.dumps({'type': 'complete', 'generated': 0, 'failed': 0, 'total': 0, 'errors': []})}\n\n"
+            return
+
+        # --- Phase 2: generate per provider ---
+        for provider_name, provider_samples in samples_by_provider.items():
+            # Notify client we're loading the provider/model
+            yield f"data: {json_mod.dumps({'type': 'loading', 'provider': provider_name, 'message': f'Loading {provider_name} model...'})}\n\n"
+
+            try:
+                tts = _load_tts_provider(provider_name)
+            except Exception as e:
+                for s in provider_samples:
+                    s.status = "failed"
+                    failed += 1
+                err = f"{provider_name}: could not load provider – {e}"
+                errors.append(err)
+                yield f"data: {json_mod.dumps({'type': 'error', 'message': err, 'generated': generated, 'failed': failed, 'total': total})}\n\n"
+                continue
+
+            if tts is None:
+                for s in provider_samples:
+                    s.status = "failed"
+                    failed += 1
+                err = f"{provider_name}: unsupported provider"
+                errors.append(err)
+                yield f"data: {json_mod.dumps({'type': 'error', 'message': err, 'generated': generated, 'failed': failed, 'total': total})}\n\n"
+                continue
+
+            for sample in provider_samples:
+                try:
+                    voice = sample.voice
+                    corpus_entry = sample.corpus_entry
+                    sample.status = "generating"
+                    await session.commit()
+
+                    audio_buf = await tts.synthesize(corpus_entry.text, voice.voice_id)
+
+                    fp = Path(sample.file_path)
+                    fp.parent.mkdir(parents=True, exist_ok=True)
+                    sf.write(str(fp), audio_buf.samples, audio_buf.sample_rate)
+
+                    sample.status = "ready"
+                    sample.duration_s = audio_buf.duration_s
+                    sample.sample_rate = audio_buf.sample_rate
+                    generated += 1
+                except Exception as e:
+                    sample.status = "failed"
+                    failed += 1
+                    err_msg = f"{voice.voice_id}/{corpus_entry.text[:30]}: {type(e).__name__}: {e}"
+                    errors.append(err_msg)
+                    logger.error(f"TTS generation failed: {err_msg}")
+                    yield f"data: {json_mod.dumps({'type': 'error', 'message': err_msg, 'generated': generated, 'failed': failed, 'total': total})}\n\n"
+
+                done = generated + failed
+                pct = (done / total * 100) if total > 0 else 0
+                current_label = f"{voice.name}: {corpus_entry.text[:40]}"
+                yield f"data: {json_mod.dumps({'type': 'progress', 'generated': generated, 'failed': failed, 'total': total, 'current': current_label, 'pct': round(pct, 1)})}\n\n"
+
+        await session.commit()
+
+        yield f"data: {json_mod.dumps({'type': 'complete', 'generated': generated, 'failed': failed, 'total': total, 'errors': errors[:50]})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.post("/generate-wavs/retry")
+async def retry_failed_samples(
+    request: dict = Body(default={}),
+    session: AsyncSession = Depends(get_session),
+):
+    """Reset all failed SpeechSample records to pending.
+
+    Optionally filter by provider(s) via ``{"providers": ["edge", "gtts"]}``.
+    After resetting, hit the generate endpoint to process them.
+    """
+    stmt = select(SpeechSample).where(SpeechSample.status == "failed")
+
+    providers = request.get("providers")
+    if providers:
+        stmt = stmt.join(Voice, SpeechSample.voice_id == Voice.id).where(
+            Voice.provider.in_(providers)
+        )
+
+    result = await session.execute(stmt)
+    samples = result.scalars().all()
+
+    count = 0
+    for sample in samples:
+        sample.status = "pending"
+        count += 1
+
+    await session.commit()
+
+    return {"reset": count}
+
+
+# ---------------------------------------------------------------------------
+# Sample browsing
+# ---------------------------------------------------------------------------
+
+
+class SampleBrowseResponse(BaseModel):
+    id: str
+    status: str
+    file_path: str
+    duration_s: float
+    sample_rate: int
+    created_at: str
+    # Voice info
+    voice_name: str
+    voice_id_str: str  # the provider-specific voice_id string
+    provider: str
+    gender: str
+    accent: str | None
+    voice_language: str
+    # Corpus info
+    text: str
+    category: str
+    expected_intent: str | None
+    expected_action: str | None
+    corpus_language: str
+
+
+class SampleBrowsePageResponse(BaseModel):
+    items: list[SampleBrowseResponse]
+    total: int
+    limit: int
+    offset: int
+
+
+# Allowed sort columns mapped to their SQLAlchemy expressions
+_SORT_COLUMNS = {
+    "created_at": SpeechSample.created_at,
+    "duration_s": SpeechSample.duration_s,
+    "provider": Voice.provider,
+    "category": CorpusEntry.category,
+}
+
+
+@router.get("/samples", response_model=SampleBrowsePageResponse)
+async def browse_samples(
+    status: str | None = None,
+    provider: str | None = None,
+    gender: str | None = None,
+    language: str | None = None,
+    corpus_language: str | None = None,
+    category: str | None = None,
+    accent: str | None = None,
+    voice_name: str | None = None,
+    text_search: str | None = None,
+    sort_by: str = "created_at",
+    sort_dir: str = "desc",
+    limit: int = 50,
+    offset: int = 0,
+    session: AsyncSession = Depends(get_session),
+):
+    """Return a paginated, filterable list of speech samples with joined voice and corpus data."""
+    # Clamp limit
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+
+    # Base query
+    base = select(SpeechSample).join(Voice).join(CorpusEntry)
+
+    # Apply filters
+    if status is not None:
+        base = base.where(SpeechSample.status == status)
+    if provider is not None:
+        base = base.where(Voice.provider == provider)
+    if gender is not None:
+        base = base.where(Voice.gender == gender)
+    if language is not None:
+        base = base.where(Voice.language == language)
+    if corpus_language is not None:
+        base = base.where(CorpusEntry.language == corpus_language)
+    if category is not None:
+        base = base.where(CorpusEntry.category == category)
+    if accent is not None:
+        base = base.where(Voice.accent == accent)
+    if voice_name is not None:
+        base = base.where(Voice.name.ilike(f"%{voice_name}%"))
+    if text_search is not None:
+        base = base.where(CorpusEntry.text.ilike(f"%{text_search}%"))
+
+    # Count total matching rows
+    count_stmt = select(func.count()).select_from(
+        base.with_only_columns(SpeechSample.id).subquery()
+    )
+    total = (await session.execute(count_stmt)).scalar() or 0
+
+    # Sorting
+    sort_col = _SORT_COLUMNS.get(sort_by, SpeechSample.created_at)
+    order_func = desc if sort_dir.lower() == "desc" else asc
+    query = base.order_by(order_func(sort_col)).offset(offset).limit(limit)
+
+    result = await session.execute(query)
+    samples = result.scalars().all()
+
+    items = [
+        SampleBrowseResponse(
+            id=str(s.id),
+            status=s.status.value if hasattr(s.status, "value") else s.status,
+            file_path=s.file_path,
+            duration_s=s.duration_s,
+            sample_rate=s.sample_rate,
+            created_at=s.created_at.isoformat() if s.created_at else "",
+            voice_name=s.voice.name,
+            voice_id_str=s.voice.voice_id,
+            provider=s.voice.provider.value if hasattr(s.voice.provider, "value") else s.voice.provider,
+            gender=s.voice.gender.value if hasattr(s.voice.gender, "value") else s.voice.gender,
+            accent=s.voice.accent,
+            voice_language=s.voice.language,
+            text=s.corpus_entry.text,
+            category=s.corpus_entry.category.value if hasattr(s.corpus_entry.category, "value") else s.corpus_entry.category,
+            expected_intent=s.corpus_entry.expected_intent,
+            expected_action=s.corpus_entry.expected_action,
+            corpus_language=s.corpus_entry.language,
+        )
+        for s in samples
+    ]
+
+    return SampleBrowsePageResponse(
+        items=items,
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
+
+
+@router.get("/samples/filters")
+async def sample_filters(session: AsyncSession = Depends(get_session)):
+    """Return distinct values for each filterable field (for populating dropdowns)."""
+    providers_q = select(distinct(Voice.provider))
+    genders_q = select(distinct(Voice.gender))
+    languages_q = select(distinct(Voice.language))
+    accents_q = select(distinct(Voice.accent)).where(Voice.accent.is_not(None))
+    categories_q = select(distinct(CorpusEntry.category))
+    statuses_q = select(distinct(SpeechSample.status))
+
+    (
+        providers_res,
+        genders_res,
+        languages_res,
+        accents_res,
+        categories_res,
+        statuses_res,
+    ) = await asyncio.gather(
+        session.execute(providers_q),
+        session.execute(genders_q),
+        session.execute(languages_q),
+        session.execute(accents_q),
+        session.execute(categories_q),
+        session.execute(statuses_q),
+    )
+
+    def _vals(result):
+        return sorted(
+            v.value if hasattr(v, "value") else v
+            for (v,) in result.all()
+            if v is not None
+        )
+
+    return {
+        "providers": _vals(providers_res),
+        "genders": _vals(genders_res),
+        "languages": _vals(languages_res),
+        "accents": _vals(accents_res),
+        "categories": _vals(categories_res),
+        "statuses": _vals(statuses_res),
+    }
 
 
 @router.get("/samples/{sample_id}/audio")

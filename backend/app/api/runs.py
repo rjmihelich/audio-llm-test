@@ -28,9 +28,12 @@ class RunResponse(BaseModel):
     total_cases: int
     completed_cases: int
     failed_cases: int
+    skipped_cases: int = 0
     progress_pct: float
     started_at: str | None = None
     completed_at: str | None = None
+    error_message: str | None = None
+    error_details: dict | None = None
 
 
 def _run_to_response(run: TestRun) -> RunResponse:
@@ -41,9 +44,12 @@ def _run_to_response(run: TestRun) -> RunResponse:
         total_cases=run.total_cases,
         completed_cases=run.completed_cases,
         failed_cases=run.failed_cases,
+        skipped_cases=getattr(run, "skipped_cases", 0),
         progress_pct=run.progress_pct,
         started_at=run.started_at.isoformat() if run.started_at else None,
         completed_at=run.completed_at.isoformat() if run.completed_at else None,
+        error_message=getattr(run, "error_message", None),
+        error_details=getattr(run, "error_details", None),
     )
 
 

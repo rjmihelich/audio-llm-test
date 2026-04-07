@@ -36,6 +36,10 @@ class SweepConfigRequest(BaseModel):
     name: str
     description: str = ""
     snr_db_values: list[float] = Field(default=[-10, -5, 0, 5, 10, 20])
+    speech_level_db_values: list[float] = Field(
+        default=[0.0],
+        description="Speech gain levels in dB. 0=original, negative=quieter/whisper, positive=louder/shout/overload.",
+    )
     noise_types: list[str] = Field(default=["pink_lpf"])
     echo: EchoProfileConfig = Field(default_factory=EchoProfileConfig)
     pipelines: list[str] = Field(default=["direct_audio", "asr_text"])
@@ -112,6 +116,7 @@ async def create_test_suite(
     sweep = SweepConfig(
         test_suite_id=suite.id,
         snr_db_values=config.snr_db_values,
+        speech_level_db_values=config.speech_level_db_values,
         delay_ms_values=config.echo.delay_ms_values,
         gain_db_values=config.echo.gain_db_values,
         noise_types=config.noise_types,
@@ -123,20 +128,23 @@ async def create_test_suite(
 
     # Build cartesian product and create test cases
     total_cases = 0
-    for sample, snr, noise, delay, gain, pipeline, backend in product(
+    for sample, snr, speech_level, noise, delay, gain, pipeline, backend in product(
         samples,
         config.snr_db_values,
+        config.speech_level_db_values,
         config.noise_types,
         config.echo.delay_ms_values,
         config.echo.gain_db_values,
         config.pipelines,
         backends,
     ):
-        # Deterministic hash
+        # Deterministic hash (includes suite ID for cross-suite uniqueness)
         hash_input = json.dumps(
             {
+                "test_suite_id": str(suite.id),
                 "speech_sample_id": str(sample.id),
                 "snr_db": snr,
+                "speech_level_db": speech_level,
                 "noise_type": noise,
                 "delay_ms": delay,
                 "gain_db": gain,
@@ -151,6 +159,7 @@ async def create_test_suite(
             test_suite_id=suite.id,
             speech_sample_id=sample.id,
             snr_db=snr,
+            speech_level_db=speech_level,
             delay_ms=delay,
             gain_db=gain,
             noise_type=noise,
@@ -246,6 +255,7 @@ async def preview_sweep(
     Does not create anything -- just returns the count and breakdown.
     """
     n_snr = len(config.snr_db_values)
+    n_speech_level = len(config.speech_level_db_values)
     n_noise = len(config.noise_types)
     n_delay = len(config.echo.delay_ms_values)
     n_gain = len(config.echo.gain_db_values)
@@ -273,12 +283,13 @@ async def preview_sweep(
     count_result = await session.execute(sample_stmt)
     n_speech = count_result.scalar() or 0
 
-    total = n_speech * n_snr * n_noise * n_delay * n_gain * n_pipelines * n_backends
+    total = n_speech * n_snr * n_speech_level * n_noise * n_delay * n_gain * n_pipelines * n_backends
 
     return SweepPreview(
         total_cases=total,
         breakdown={
             "snr_levels": n_snr,
+            "speech_levels": n_speech_level,
             "noise_types": n_noise,
             "echo_delays": n_delay,
             "echo_gains": n_gain,

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   fetchVoices,
@@ -6,10 +6,25 @@ import {
   synthesizePreview,
   syncVoices,
   seedCorpus,
-  generateWavs,
+  fetchSpeechStats,
+  fetchCorpusStats,
+  retryFailedSamples,
   type VoiceResponse,
   type CorpusEntryResponse,
 } from "../api/client";
+
+// ---------------------------------------------------------------------------
+// SSE Generation progress state
+// ---------------------------------------------------------------------------
+interface GenProgress {
+  status: "idle" | "planning" | "loading" | "running" | "complete" | "error";
+  total: number;
+  generated: number;
+  failed: number;
+  pct: number;
+  current: string;
+  errors: string[];
+}
 
 const CATEGORIES = [
   "harvard_sentence",
@@ -21,7 +36,7 @@ const CATEGORIES = [
 ];
 
 const LANGUAGES = ["en", "es", "fr", "de", "it", "pt-BR", "ja", "ko", "zh"];
-const PROVIDERS = ["edge", "gtts", "espeak", "piper", "coqui", "bark", "openai", "elevenlabs", "google"];
+const PROVIDERS = ["edge", "gtts", "espeak", "piper", "coqui", "bark", "openai", "elevenlabs", "google", "azure", "slurp"];
 const GENDERS = ["male", "female", "neutral"];
 
 function toggle<T extends string>(
@@ -105,6 +120,23 @@ export default function SpeechCorpus() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["voices"] }),
   });
 
+  // --- Corpus Stats ---
+  const corpusStats = useQuery({
+    queryKey: ["corpus-stats"],
+    queryFn: () => fetchCorpusStats(),
+  });
+
+  // --- Speech Stats (Sample Inventory) ---
+  const speechStats = useQuery({
+    queryKey: ["speech-stats"],
+    queryFn: () => fetchSpeechStats(),
+  });
+
+  const retryMutation = useMutation({
+    mutationFn: () => retryFailedSamples(),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["speech-stats"] }),
+  });
+
   // --- Step 2: Corpus ---
   const [seedLanguages, setSeedLanguages] = useState<string[]>(["en"]);
   const [corpusFilterCat, setCorpusFilterCat] = useState("");
@@ -157,14 +189,168 @@ export default function SpeechCorpus() {
     queryFn: () => synthesizePreview(genParams),
   });
 
-  const generateMutation = useMutation({
-    mutationFn: () => generateWavs(genParams),
+  // --- SSE-based generation with progress ---
+  const [genProgress, setGenProgress] = useState<GenProgress>({
+    status: "idle",
+    total: 0,
+    generated: 0,
+    failed: 0,
+    pct: 0,
+    current: "",
+    errors: [],
   });
+  const abortRef = useRef<AbortController | null>(null);
+
+  const startGeneration = useCallback(async () => {
+    // Reset state
+    setGenProgress({
+      status: "planning",
+      total: 0,
+      generated: 0,
+      failed: 0,
+      pct: 0,
+      current: "Connecting...",
+      errors: [],
+    });
+
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    try {
+      const res = await fetch("/api/speech/generate-wavs/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(genParams),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const body = await res.text();
+        setGenProgress((prev) => ({
+          ...prev,
+          status: "error",
+          current: `API ${res.status}: ${body}`,
+        }));
+        return;
+      }
+
+      const reader = res.body?.getReader();
+      if (!reader) {
+        setGenProgress((prev) => ({
+          ...prev,
+          status: "error",
+          current: "No response stream",
+        }));
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          try {
+            const evt = JSON.parse(line.slice(6));
+            switch (evt.type) {
+              case "planning":
+                setGenProgress((prev) => ({
+                  ...prev,
+                  status: "planning",
+                  current: evt.message || "Building generation plan...",
+                }));
+                break;
+              case "loading":
+                setGenProgress((prev) => ({
+                  ...prev,
+                  status: "loading",
+                  current: evt.message || `Loading ${evt.provider} model...`,
+                }));
+                break;
+              case "start":
+                setGenProgress((prev) => ({
+                  ...prev,
+                  status: "running",
+                  total: evt.total,
+                  current: `0 / ${evt.total}`,
+                }));
+                break;
+              case "progress":
+                setGenProgress((prev) => ({
+                  ...prev,
+                  generated: evt.generated,
+                  failed: evt.failed,
+                  total: evt.total,
+                  pct: evt.pct,
+                  current: evt.current || "",
+                }));
+                break;
+              case "error":
+                setGenProgress((prev) => ({
+                  ...prev,
+                  generated: evt.generated,
+                  failed: evt.failed,
+                  total: evt.total,
+                  errors: [...prev.errors, evt.message],
+                }));
+                break;
+              case "complete":
+                setGenProgress((prev) => ({
+                  ...prev,
+                  status: "complete",
+                  generated: evt.generated,
+                  failed: evt.failed,
+                  total: evt.total,
+                  pct: 100,
+                  current: "",
+                  errors: evt.errors || prev.errors,
+                }));
+                break;
+            }
+          } catch {
+            // skip malformed JSON lines
+          }
+        }
+      }
+
+      // If stream ended without a complete event, mark complete
+      setGenProgress((prev) =>
+        prev.status === "running" ? { ...prev, status: "complete", pct: 100 } : prev
+      );
+    } catch (err: unknown) {
+      if ((err as Error).name === "AbortError") {
+        setGenProgress((prev) => ({
+          ...prev,
+          status: "error",
+          current: "Generation cancelled",
+        }));
+      } else {
+        setGenProgress((prev) => ({
+          ...prev,
+          status: "error",
+          current: (err as Error).message,
+        }));
+      }
+    } finally {
+      abortRef.current = null;
+    }
+  }, [genParams]);
+
+  const cancelGeneration = useCallback(() => {
+    abortRef.current?.abort();
+  }, []);
 
   const p = preview.data;
 
   return (
-    <div className="p-8 max-w-5xl mx-auto">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-5xl mx-auto">
       <h2 className="text-2xl font-bold text-gray-900 mb-8">Speech Corpus</h2>
 
       {/* ================================================================= */}
@@ -201,7 +387,7 @@ export default function SpeechCorpus() {
         </div>
 
         {/* Filters */}
-        <div className="flex gap-3 mb-3">
+        <div className="flex flex-wrap gap-3 mb-3">
           <select
             value={voiceProvider}
             onChange={(e) => setVoiceProvider(e.target.value)}
@@ -286,6 +472,19 @@ export default function SpeechCorpus() {
           countLabel="entries"
         />
 
+        {/* Corpus category badges */}
+        {corpusStats.data && Object.keys(corpusStats.data.by_category).length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5 mb-3 text-xs text-gray-500">
+            {Object.entries(corpusStats.data.by_category).map(([cat, count], i) => (
+              <span key={cat} className="flex items-center gap-1">
+                {i > 0 && <span className="text-gray-300 mx-0.5">|</span>}
+                <span className="text-gray-700 font-medium">{cat.replace("_", " ")}</span>
+                <span className="text-gray-400">({count})</span>
+              </span>
+            ))}
+          </div>
+        )}
+
         <div className="flex items-center gap-3 mb-4">
           <button
             onClick={() => seedMutation.mutate()}
@@ -319,7 +518,7 @@ export default function SpeechCorpus() {
         </div>
 
         {/* Browse filters */}
-        <div className="flex gap-3 mb-3">
+        <div className="flex flex-wrap gap-3 mb-3">
           <select
             value={corpusFilterCat}
             onChange={(e) => setCorpusFilterCat(e.target.value)}
@@ -354,6 +553,7 @@ export default function SpeechCorpus() {
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-gray-50">
                 <tr className="text-left text-gray-500 border-b border-gray-100">
+                  <th className="px-3 py-2 font-medium w-8"></th>
                   <th className="px-3 py-2 font-medium">Text</th>
                   <th className="px-3 py-2 font-medium">Category</th>
                   <th className="px-3 py-2 font-medium">Intent</th>
@@ -364,7 +564,7 @@ export default function SpeechCorpus() {
                 {corpus.data?.length === 0 && (
                   <tr>
                     <td
-                      colSpan={4}
+                      colSpan={5}
                       className="px-3 py-6 text-center text-gray-400"
                     >
                       No entries. Seed the corpus above.
@@ -376,6 +576,22 @@ export default function SpeechCorpus() {
                     key={e.id}
                     className="border-b border-gray-50 hover:bg-gray-50"
                   >
+                    <td className="px-3 py-1.5">
+                      <button
+                        title="Preview with speech synthesis"
+                        onClick={() => {
+                          window.speechSynthesis.cancel();
+                          const utterance = new SpeechSynthesisUtterance(e.text);
+                          utterance.lang = e.language;
+                          window.speechSynthesis.speak(utterance);
+                        }}
+                        className="text-gray-400 hover:text-slate-700 transition-colors"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
+                          <path d="M6.3 2.84A1.5 1.5 0 004 4.11v11.78a1.5 1.5 0 002.3 1.27l9.344-5.891a1.5 1.5 0 000-2.538L6.3 2.84z" />
+                        </svg>
+                      </button>
+                    </td>
                     <td className="px-3 py-1.5 text-gray-900 max-w-sm truncate">
                       {e.text}
                     </td>
@@ -400,7 +616,7 @@ export default function SpeechCorpus() {
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5">
         <SectionHeader step={3} title="Generate WAV Files" />
 
-        <div className="grid grid-cols-2 gap-6 mb-5">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-5">
           {/* Left: Corpus scope */}
           <div>
             <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
@@ -601,51 +817,248 @@ export default function SpeechCorpus() {
         )}
 
         {/* Generate button */}
-        <button
-          onClick={() => generateMutation.mutate()}
-          disabled={
-            generateMutation.isPending || !p || p.total_combinations === 0
-          }
-          className="w-full px-4 py-2.5 bg-slate-800 text-white text-sm font-medium rounded-lg hover:bg-slate-700 disabled:opacity-50 transition-colors"
-        >
-          {generateMutation.isPending
-            ? "Generating WAV files..."
-            : p && p.total_combinations > 0
-            ? `Generate ${p.total_combinations.toLocaleString()} WAV Files`
-            : "Generate WAV Files"}
-        </button>
+        {["planning", "loading", "running"].includes(genProgress.status) ? (
+          <button
+            onClick={cancelGeneration}
+            className="w-full px-4 py-2.5 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-500 transition-colors"
+          >
+            Cancel Generation
+          </button>
+        ) : (
+          <button
+            onClick={startGeneration}
+            disabled={!p || p.total_combinations === 0}
+            className="w-full px-4 py-2.5 bg-slate-800 text-white text-sm font-medium rounded-lg hover:bg-slate-700 disabled:opacity-50 transition-colors"
+          >
+            {p && p.total_combinations > 0
+              ? `Generate ${p.total_combinations.toLocaleString()} WAV Files`
+              : "Generate WAV Files"}
+          </button>
+        )}
 
-        {/* Results */}
-        {generateMutation.isSuccess && (
-          <div className="mt-3 rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">
-            <strong>{generateMutation.data.generated.toLocaleString()}</strong>{" "}
-            generated
-            {generateMutation.data.failed > 0 && (
-              <span className="text-amber-600 ml-3">
-                {generateMutation.data.failed} failed
+        {/* Planning / Loading phase (before progress starts) */}
+        {(genProgress.status === "planning" || genProgress.status === "loading") && (
+          <div className="mt-4 space-y-2">
+            <div className="flex items-center gap-3 text-sm text-gray-600">
+              <svg className="animate-spin h-4 w-4 text-slate-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+              </svg>
+              <span>{genProgress.current}</span>
+            </div>
+            <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
+              <div className="h-full bg-slate-400 rounded-full animate-pulse" style={{ width: "100%" }} />
+            </div>
+          </div>
+        )}
+
+        {/* Progress bar */}
+        {genProgress.status === "running" && (
+          <div className="mt-4 space-y-2">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-600 font-medium">
+                {genProgress.generated + genProgress.failed} / {genProgress.total}
+              </span>
+              <span className="text-gray-500">{genProgress.pct.toFixed(1)}%</span>
+            </div>
+            <div className="w-full h-3 bg-gray-100 rounded-full overflow-hidden">
+              <div className="h-full flex transition-all duration-300">
+                <div
+                  className="bg-green-500 transition-all duration-300"
+                  style={{
+                    width: genProgress.total > 0
+                      ? `${(genProgress.generated / genProgress.total) * 100}%`
+                      : "0%",
+                  }}
+                />
+                <div
+                  className="bg-red-400 transition-all duration-300"
+                  style={{
+                    width: genProgress.total > 0
+                      ? `${(genProgress.failed / genProgress.total) * 100}%`
+                      : "0%",
+                  }}
+                />
+              </div>
+            </div>
+            <div className="flex items-center gap-4 text-xs text-gray-500">
+              <span className="flex items-center gap-1">
+                <span className="inline-block w-2 h-2 rounded-full bg-green-500" />
+                {genProgress.generated} generated
+              </span>
+              {genProgress.failed > 0 && (
+                <span className="flex items-center gap-1">
+                  <span className="inline-block w-2 h-2 rounded-full bg-red-400" />
+                  {genProgress.failed} failed
+                </span>
+              )}
+            </div>
+            {genProgress.current && (
+              <div className="text-xs text-gray-400 truncate">
+                {genProgress.current}
+              </div>
+            )}
+            {/* Live errors during generation */}
+            {genProgress.errors.length > 0 && (
+              <details className="mt-1">
+                <summary className="text-xs text-amber-600 cursor-pointer">
+                  {genProgress.errors.length} error{genProgress.errors.length > 1 ? "s" : ""}
+                </summary>
+                <ul className="mt-1 text-xs text-gray-500 space-y-0.5 max-h-32 overflow-y-auto">
+                  {genProgress.errors.map((err, i) => (
+                    <li key={i} className="truncate">{err}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
+
+        {/* Completed summary */}
+        {genProgress.status === "complete" && (
+          <div className="mt-3 space-y-2">
+            <div className="rounded-lg bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">
+              <strong>{genProgress.generated.toLocaleString()}</strong> generated
+              {genProgress.failed > 0 && (
+                <span className="text-amber-600 ml-3">
+                  {genProgress.failed} failed
+                </span>
+              )}
+              <span className="text-gray-400 ml-3">
+                / {genProgress.total} total
+              </span>
+            </div>
+            {genProgress.errors.length > 0 && (
+              <details>
+                <summary className="text-xs text-amber-600 cursor-pointer">
+                  {genProgress.errors.length} error{genProgress.errors.length > 1 ? "s" : ""}
+                </summary>
+                <ul className="mt-1 text-xs text-gray-500 space-y-0.5 max-h-40 overflow-y-auto">
+                  {genProgress.errors.map((err, i) => (
+                    <li key={i} className="truncate">{err}</li>
+                  ))}
+                </ul>
+              </details>
+            )}
+          </div>
+        )}
+
+        {/* Error state */}
+        {genProgress.status === "error" && (
+          <div className="mt-3 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+            {genProgress.current}
+            {genProgress.generated > 0 && (
+              <span className="text-green-600 ml-3">
+                ({genProgress.generated} generated before error)
               </span>
             )}
           </div>
         )}
-        {generateMutation.isSuccess &&
-          generateMutation.data.errors.length > 0 && (
-            <details className="mt-2">
-              <summary className="text-xs text-amber-600 cursor-pointer">
-                {generateMutation.data.errors.length} errors
-              </summary>
-              <ul className="mt-1 text-xs text-gray-500 space-y-0.5 max-h-32 overflow-y-auto">
-                {generateMutation.data.errors.map((err, i) => (
-                  <li key={i} className="truncate">
-                    {err}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-        {generateMutation.isError && (
-          <div className="mt-3 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
-            {(generateMutation.error as Error).message}
-          </div>
+      </div>
+
+      {/* ================================================================= */}
+      {/* STEP 4 — Sample Inventory                                         */}
+      {/* ================================================================= */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-5 mt-6">
+        <SectionHeader step={4} title="Sample Inventory" />
+
+        {speechStats.isLoading && (
+          <p className="text-sm text-gray-400">Loading stats...</p>
+        )}
+        {speechStats.isError && (
+          <p className="text-sm text-red-600">
+            {(speechStats.error as Error).message}
+          </p>
+        )}
+
+        {speechStats.data && (
+          <>
+            <div className="overflow-x-auto rounded-lg border border-gray-100 mb-4">
+              <table className="w-full text-xs">
+                <thead className="bg-gray-50">
+                  <tr className="text-left text-gray-500 border-b border-gray-100">
+                    <th className="px-3 py-2 font-medium">Provider</th>
+                    <th className="px-3 py-2 font-medium text-right">Ready</th>
+                    <th className="px-3 py-2 font-medium text-right">Failed</th>
+                    <th className="px-3 py-2 font-medium text-right">Pending</th>
+                    <th className="px-3 py-2 font-medium text-right">Generating</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {Object.entries(speechStats.data.by_provider).map(
+                    ([provider, counts]) => (
+                      <tr
+                        key={provider}
+                        className="border-b border-gray-50 hover:bg-gray-50"
+                      >
+                        <td className="px-3 py-1.5 text-gray-900 font-medium">
+                          {provider}
+                        </td>
+                        <td className="px-3 py-1.5 text-right">
+                          <span className="text-green-600 font-medium">
+                            {counts.ready}
+                          </span>
+                        </td>
+                        <td className="px-3 py-1.5 text-right">
+                          <span className={counts.failed > 0 ? "text-red-600 font-medium" : "text-gray-400"}>
+                            {counts.failed}
+                          </span>
+                        </td>
+                        <td className="px-3 py-1.5 text-right">
+                          <span className={counts.pending > 0 ? "text-gray-600" : "text-gray-400"}>
+                            {counts.pending}
+                          </span>
+                        </td>
+                        <td className="px-3 py-1.5 text-right">
+                          <span className={counts.generating > 0 ? "text-blue-600 font-medium" : "text-gray-400"}>
+                            {counts.generating}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  )}
+                  {/* Totals row */}
+                  <tr className="bg-gray-50 border-t border-gray-200 font-semibold">
+                    <td className="px-3 py-2 text-gray-800">Total</td>
+                    <td className="px-3 py-2 text-right text-green-600">
+                      {speechStats.data.totals.ready}
+                    </td>
+                    <td className="px-3 py-2 text-right text-red-600">
+                      {speechStats.data.totals.failed}
+                    </td>
+                    <td className="px-3 py-2 text-right text-gray-600">
+                      {speechStats.data.totals.pending}
+                    </td>
+                    <td className="px-3 py-2 text-right text-blue-600">
+                      {speechStats.data.totals.generating}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            {speechStats.data.totals.failed > 0 && (
+              <button
+                onClick={() => retryMutation.mutate()}
+                disabled={retryMutation.isPending}
+                className="px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-lg hover:bg-red-500 disabled:opacity-50 transition-colors"
+              >
+                {retryMutation.isPending
+                  ? "Retrying..."
+                  : `Retry ${speechStats.data.totals.failed} Failed`}
+              </button>
+            )}
+            {retryMutation.isSuccess && (
+              <span className="ml-3 text-sm text-green-600">
+                Retried: {retryMutation.data.generated} generated, {retryMutation.data.failed} still failed
+              </span>
+            )}
+            {retryMutation.isError && (
+              <span className="ml-3 text-sm text-red-600">
+                {(retryMutation.error as Error).message}
+              </span>
+            )}
+          </>
         )}
       </div>
     </div>

@@ -8,6 +8,12 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
+      "/api/speech/generate-wavs/stream": {
+        target: apiTarget,
+        changeOrigin: true,
+        // SSE must not be buffered or compressed
+        headers: { "Accept-Encoding": "identity" },
+      },
       "/api": {
         target: apiTarget,
         changeOrigin: true,

@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     elevenlabs_api_key: str = ""
     deepgram_api_key: str = ""
 
+    # Azure Speech (for expressive TTS styles: whispering, shouting, etc.)
+    azure_speech_key: str = ""
+    azure_speech_region: str = "eastus"
+
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
 

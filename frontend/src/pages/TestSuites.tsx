@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   listTestSuites,
   createTestSuite,
+  deleteTestSuite,
   previewSweep,
   launchRun,
   fetchKeyStatus,
@@ -13,6 +14,7 @@ import {
 } from "../api/client";
 
 const SNR_OPTIONS = [-10, -5, 0, 5, 10, 15, 20, 30];
+const SPEECH_LEVEL_OPTIONS = [-60, -50, -40, -30, -20, -10, 0, 10, 20];
 const NOISE_TYPES = ["white", "pink", "pink_lpf", "babble", "traffic", "silence"];
 const PIPELINES = ["direct_audio", "asr_text"];
 
@@ -31,6 +33,7 @@ const ALL_BACKENDS: BackendDef[] = [
   { key: "ollama:llama2:70b", label: "Ollama · Llama 2 70B",   paid: false, keyField: "ollama",    pipeline: "asr_text" },
   // --- Paid ---
   { key: "openai:gpt-4o-audio-preview", label: "OpenAI · GPT-4o Audio", paid: true, keyField: "openai", pipeline: "both" },
+  { key: "openai-realtime:gpt-4o-realtime-preview", label: "OpenAI · Realtime API", paid: true, keyField: "openai", pipeline: "both" },
   { key: "openai:gpt-4o-mini",          label: "OpenAI · GPT-4o Mini",  paid: true, keyField: "openai", pipeline: "asr_text" },
   { key: "gemini:gemini-2.0-flash",     label: "Google · Gemini 2.0 Flash", paid: true, keyField: "google", pipeline: "both" },
   { key: "anthropic:claude-haiku-4-5-20251001", label: "Anthropic · Claude Haiku", paid: true, keyField: "anthropic", pipeline: "asr_text" },
@@ -74,11 +77,12 @@ function CostBadge({ paid, hasKey }: { paid: boolean; hasKey: boolean }) {
 export default function TestSuites() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
+  const [expandedSuiteId, setExpandedSuiteId] = useState<string | null>(null);
 
   const suites = useQuery({ queryKey: ["suites"], queryFn: listTestSuites });
 
   return (
-    <div className="p-8 max-w-7xl mx-auto">
+    <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h2 className="text-2xl font-bold text-gray-900">Test Suites</h2>
         <button
@@ -119,7 +123,14 @@ export default function TestSuites() {
               </tr>
             )}
             {suites.data?.map((s) => (
-              <SuiteRow key={s.id} suite={s} />
+              <SuiteRow
+                key={s.id}
+                suite={s}
+                expanded={expandedSuiteId === s.id}
+                onToggle={() =>
+                  setExpandedSuiteId(expandedSuiteId === s.id ? null : s.id)
+                }
+              />
             ))}
           </tbody>
         </table>
@@ -132,37 +143,134 @@ export default function TestSuites() {
 // Suite Row
 // ---------------------------------------------------------------------------
 
-function SuiteRow({ suite }: { suite: { id: string; name: string; status: string; total_cases: number; created_at: string } }) {
-  const launch = useMutation({ mutationFn: () => launchRun(suite.id) });
+function SuiteRow({
+  suite,
+  expanded,
+  onToggle,
+}: {
+  suite: {
+    id: string;
+    name: string;
+    description: string;
+    status: string;
+    total_cases: number;
+    created_at: string;
+  };
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+
+  const launch = useMutation({
+    mutationFn: () => launchRun(suite.id),
+    onSuccess: (data) => navigate(`/runs/${data.id}`),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: () => deleteTestSuite(suite.id),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["suites"] }),
+  });
 
   return (
-    <tr className="border-b border-gray-50 hover:bg-gray-50">
-      <td className="px-6 py-3 font-medium text-gray-900">{suite.name}</td>
-      <td className="px-6 py-3">
-        <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
-          {suite.status}
-        </span>
-      </td>
-      <td className="px-6 py-3 text-gray-600">{suite.total_cases}</td>
-      <td className="px-6 py-3 text-xs text-gray-500">{suite.created_at}</td>
-      <td className="px-6 py-3 flex gap-2">
-        <button
-          onClick={() => launch.mutate()}
-          disabled={launch.isPending}
-          className="text-xs font-medium text-blue-600 hover:text-blue-800 disabled:opacity-50"
-        >
-          Run
-        </button>
-        {launch.isSuccess && (
-          <Link
-            to={`/runs/${launch.data.id}`}
-            className="text-xs font-medium text-green-600"
+    <>
+      <tr
+        className="border-b border-gray-50 hover:bg-gray-50 cursor-pointer"
+        onClick={onToggle}
+      >
+        <td className="px-6 py-3 font-medium text-gray-900">
+          <span className="mr-2 text-gray-400 text-xs">{expanded ? "▼" : "▶"}</span>
+          {suite.name}
+        </td>
+        <td className="px-6 py-3">
+          <span
+            className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+              suite.status === "ready"
+                ? "bg-green-100 text-green-700"
+                : "bg-gray-100 text-gray-600"
+            }`}
           >
-            Monitor
-          </Link>
-        )}
-      </td>
-    </tr>
+            {suite.status}
+          </span>
+        </td>
+        <td className="px-6 py-3 text-gray-600">{suite.total_cases}</td>
+        <td className="px-6 py-3 text-xs text-gray-500">{suite.created_at}</td>
+        <td className="px-6 py-3">
+          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+            {suite.status === "ready" && (
+              <button
+                onClick={() => launch.mutate()}
+                disabled={launch.isPending}
+                className="px-2.5 py-1 text-xs font-medium text-white bg-green-600 rounded hover:bg-green-700 disabled:opacity-50 transition-colors"
+              >
+                {launch.isPending ? "..." : "Run"}
+              </button>
+            )}
+            <button
+              onClick={() => {
+                if (
+                  window.confirm(
+                    `Delete suite "${suite.name}" and all its test cases?`
+                  )
+                ) {
+                  deleteMut.mutate();
+                }
+              }}
+              disabled={deleteMut.isPending}
+              className="px-1.5 py-0.5 text-xs font-medium text-red-500 hover:text-red-700 hover:bg-red-50 rounded disabled:opacity-50 transition-colors"
+              title="Delete suite"
+            >
+              ✕
+            </button>
+          </div>
+        </td>
+      </tr>
+
+      {expanded && (
+        <tr className="border-b border-gray-50 bg-gray-50/50">
+          <td colSpan={5} className="px-6 py-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-1">Total Cases</p>
+                <p className="text-gray-900 font-semibold">{suite.total_cases}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-1">Status</p>
+                <p className="text-gray-900">{suite.status}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-1">Created</p>
+                <p className="text-gray-900">{suite.created_at}</p>
+              </div>
+              <div>
+                <p className="text-xs font-medium text-gray-500 mb-1">Description</p>
+                <p className="text-gray-900">{suite.description || "—"}</p>
+              </div>
+            </div>
+
+            <div className="mt-4 flex items-center gap-3">
+              <button
+                onClick={() => launch.mutate()}
+                disabled={launch.isPending || suite.status !== "ready"}
+                className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
+              >
+                {launch.isPending ? "Launching..." : "Launch Run"}
+              </button>
+              {suite.status !== "ready" && (
+                <span className="text-xs text-gray-400">
+                  Suite must be in "ready" status to launch a run.
+                </span>
+              )}
+              {launch.isError && (
+                <span className="text-xs text-red-600">
+                  {(launch.error as Error).message}
+                </span>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
   );
 }
 
@@ -174,6 +282,7 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [snrValues, setSnrValues] = useState<number[]>([0, 10, 20]);
+  const [speechLevels, setSpeechLevels] = useState<number[]>([0]);
   const [noiseTypes, setNoiseTypes] = useState<string[]>(["pink_lpf"]);
   const [delayRange, setDelayRange] = useState<number[]>([0]);
   const [gainRange, setGainRange] = useState<number[]>([-60]);
@@ -189,6 +298,7 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
       name,
       description,
       snr_db_values: snrValues,
+      speech_level_db_values: speechLevels,
       noise_types: noiseTypes,
       echo: {
         delay_ms_values: delayRange,
@@ -274,6 +384,37 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
                 }`}
               >
                 {v} dB
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Speech Level */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            Speech Level (dB)
+          </label>
+          <p className="text-xs text-gray-400 mb-2">
+            Digital gain on speech. Negative = whisper/quiet, 0 = original, positive = loud/overload clipping.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {SPEECH_LEVEL_OPTIONS.map((v) => (
+              <button
+                key={v}
+                onClick={() => toggleItem(speechLevels, v, setSpeechLevels)}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
+                  speechLevels.includes(v)
+                    ? v < -20
+                      ? "bg-blue-600 text-white border-blue-600"
+                      : v > 10
+                        ? "bg-red-600 text-white border-red-600"
+                        : "bg-slate-800 text-white border-slate-800"
+                    : "bg-white text-gray-600 border-gray-200 hover:border-gray-400"
+                }`}
+              >
+                {v > 0 ? `+${v}` : v} dB
+                {v <= -40 && " 🤫"}
+                {v >= 20 && " 📢"}
               </button>
             ))}
           </div>

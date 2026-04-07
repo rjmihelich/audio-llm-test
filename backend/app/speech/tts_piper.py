@@ -1,21 +1,23 @@
 """Piper TTS provider — fast local neural TTS (offline, free).
 
 Requires: pip install piper-tts
-Models are downloaded automatically on first use.
+Models are downloaded automatically on first use to ~/.local/share/piper-models/.
 """
 
 from __future__ import annotations
 
-import io
-import tempfile
-import wave
+import logging
+from pathlib import Path
 
 import numpy as np
 
 from ..audio.types import AudioBuffer
 from .tts_base import VoiceInfo
 
+logger = logging.getLogger(__name__)
+
 _DEFAULT_MODEL = "en_US-lessac-medium"
+_MODEL_DIR = Path.home() / ".local" / "share" / "piper-models"
 
 # Curated voice list — Piper ships many ONNX models.
 # Each tuple: (model_name, display_name, gender, age_group, accent, language)
@@ -41,10 +43,41 @@ _VOICE_MAP: list[tuple[str, str, str, str, str, str]] = [
 ]
 
 
+def _ensure_model(voice_id: str) -> Path:
+    """Download model if not already on disk. Returns path to .onnx file."""
+    _MODEL_DIR.mkdir(parents=True, exist_ok=True)
+
+    onnx_path = _MODEL_DIR / f"{voice_id}.onnx"
+    json_path = _MODEL_DIR / f"{voice_id}.onnx.json"
+
+    if onnx_path.exists() and json_path.exists():
+        return onnx_path
+
+    logger.info("Downloading Piper model '%s' to %s ...", voice_id, _MODEL_DIR)
+    try:
+        from piper.download_voices import download_voice
+
+        download_voice(voice_id, _MODEL_DIR)
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to download Piper model '{voice_id}': {e}. "
+            f"You can manually download from https://huggingface.co/rhasspy/piper-voices"
+        ) from e
+
+    if not onnx_path.exists():
+        raise FileNotFoundError(
+            f"Model file not found after download: {onnx_path}"
+        )
+    return onnx_path
+
+
 class PiperTTSProvider:
     """TTS provider using Piper for fast local neural synthesis."""
 
     provider_name: str = "piper"
+
+    # Class-level model cache — survives across calls and provider instances
+    _voice_cache: dict[str, object] = {}
 
     def __init__(self, model: str = _DEFAULT_MODEL) -> None:
         self._default_model = model
@@ -59,24 +92,32 @@ class PiperTTSProvider:
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self._synthesize_sync, text, voice_id)
 
+    def _get_voice(self, voice_id: str):
+        """Load a PiperVoice, caching it so the ONNX model is only parsed once."""
+        if voice_id not in self._voice_cache:
+            from piper import PiperVoice
+
+            # Auto-download if needed
+            model_path = _ensure_model(voice_id)
+            self._voice_cache[voice_id] = PiperVoice.load(str(model_path))
+            logger.info("Piper model '%s' loaded and cached.", voice_id)
+        return self._voice_cache[voice_id]
+
     def _synthesize_sync(self, text: str, voice_id: str) -> AudioBuffer:
-        from piper import PiperVoice
+        voice = self._get_voice(voice_id)
 
-        voice = PiperVoice.load(voice_id, download_dir=None, update=False)
+        # Piper's synthesize yields AudioChunk objects with float32 arrays
+        chunks = []
+        sample_rate = 22050  # will be overwritten
+        for chunk in voice.synthesize(text):
+            sample_rate = chunk.sample_rate
+            chunks.append(chunk.audio_float_array)
 
-        buf = io.BytesIO()
-        with wave.open(buf, "wb") as wav:
-            voice.synthesize(text, wav)
+        if not chunks:
+            raise RuntimeError(f"Piper produced no audio for: {text[:50]}")
 
-        buf.seek(0)
-        with wave.open(buf, "rb") as wav:
-            sample_rate = wav.getframerate()
-            n_frames = wav.getnframes()
-            raw = wav.readframes(n_frames)
-
-        samples_int16 = np.frombuffer(raw, dtype=np.int16)
-        samples_f64 = samples_int16.astype(np.float64) / 32768.0
-        return AudioBuffer(samples=samples_f64, sample_rate=sample_rate)
+        samples = np.concatenate(chunks).astype(np.float64)
+        return AudioBuffer(samples=samples, sample_rate=sample_rate)
 
     async def list_voices(self) -> list[VoiceInfo]:
         """Return curated set of Piper voices."""

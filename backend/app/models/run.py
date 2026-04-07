@@ -43,7 +43,10 @@ class TestRun(Base):
     total_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     completed_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     failed_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    skipped_cases: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     progress_pct: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    error_details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     # Relationships
     test_suite: Mapped["TestSuite"] = relationship(back_populates="test_runs", lazy="selectin")
@@ -68,6 +71,8 @@ class TestResult(Base):
     evaluation_passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     evaluation_details_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     evaluator_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True, comment="Pipeline or evaluation error message")
+    error_stage: Mapped[str | None] = mapped_column(String(50), nullable=True, comment="Stage where error occurred: audio_load, pipeline, evaluation, timeout")
 
     # Relationships
     test_run: Mapped["TestRun"] = relationship(back_populates="results", lazy="selectin")
