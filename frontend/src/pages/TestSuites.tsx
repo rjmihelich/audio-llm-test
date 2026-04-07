@@ -421,10 +421,10 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
         </div>
       </div>
 
-      {/* Row 2: Audio Sources + LLM Backends side by side */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      {/* Row 2: Audio Sources + Pipeline/Backends side by side */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Audio Sources */}
-        <div className="lg:col-span-2 bg-blue-50/60 rounded-lg p-4 border border-blue-100">
+        <div className="bg-blue-50/60 rounded-lg p-4 border border-blue-100">
           <div className="flex items-center justify-between mb-3">
             <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Audio Sources</h4>
             {audioSources.data && (
@@ -515,24 +515,55 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
 
           <div>
             <SectionHeader title="LLM Backends" count={backends.length} />
-            <div className="space-y-1 max-h-48 overflow-y-auto">
-              {availableBackends.map((b) => {
-                const keyOk = hasKey(b.keyField);
-                const disabled = b.paid && !keyOk;
-                return (
-                  <label key={b.key} className={`flex items-center gap-2 text-xs ${disabled ? "text-red-400" : "text-gray-700"}`}>
-                    <input
-                      type="checkbox"
-                      checked={backends.includes(b.key)}
-                      onChange={() => toggleItem(backends, b.key, setBackends)}
-                      className="rounded border-gray-300 h-3.5 w-3.5"
-                      disabled={disabled}
-                    />
-                    <CostBadge paid={b.paid} hasKey={keyOk} />
-                    <span className={`flex-1 truncate ${disabled ? "line-through" : ""}`}>{b.label}</span>
-                  </label>
-                );
-              })}
+
+            {/* Local (Ollama) */}
+            {ollamaBackends.length > 0 && (
+              <div className="mb-2">
+                <p className="text-[10px] font-medium text-gray-400 mb-1">LOCAL (FREE)</p>
+                <div className="space-y-1">
+                  {ollamaBackends.filter(b => {
+                    if (b.pipeline === "both") return true;
+                    return pipelines.includes(b.pipeline);
+                  }).map((b) => (
+                    <label key={b.key} className="flex items-center gap-2 text-xs text-gray-700">
+                      <input
+                        type="checkbox"
+                        checked={backends.includes(b.key)}
+                        onChange={() => toggleItem(backends, b.key, setBackends)}
+                        className="rounded border-gray-300 h-3.5 w-3.5"
+                      />
+                      <span className="flex-1 truncate">{b.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Cloud APIs */}
+            <div>
+              <p className="text-[10px] font-medium text-gray-400 mb-1">CLOUD APIs</p>
+              <div className="space-y-1">
+                {CLOUD_BACKENDS.filter(b => {
+                  if (b.pipeline === "both") return true;
+                  return pipelines.includes(b.pipeline);
+                }).map((b) => {
+                  const keyOk = hasKey(b.keyField);
+                  const disabled = b.paid && !keyOk;
+                  return (
+                    <label key={b.key} className={`flex items-center gap-2 text-xs ${disabled ? "text-red-400" : "text-gray-700"}`}>
+                      <input
+                        type="checkbox"
+                        checked={backends.includes(b.key)}
+                        onChange={() => toggleItem(backends, b.key, setBackends)}
+                        className="rounded border-gray-300 h-3.5 w-3.5"
+                        disabled={disabled}
+                      />
+                      <CostBadge paid={b.paid} hasKey={keyOk} />
+                      <span className={`flex-1 truncate ${disabled ? "line-through" : ""}`}>{b.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
             </div>
           </div>
         </div>
