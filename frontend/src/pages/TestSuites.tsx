@@ -8,6 +8,7 @@ import {
   previewSweep,
   launchRun,
   fetchKeyStatus,
+  fetchOllamaModels,
   type SweepConfigRequest,
   type SweepPreview,
   type KeyStatusResponse,
@@ -27,10 +28,7 @@ interface BackendDef {
   pipeline: "direct_audio" | "asr_text" | "both";
 }
 
-const ALL_BACKENDS: BackendDef[] = [
-  // --- Free / Local ---
-  { key: "ollama:mistral",   label: "Ollama · Mistral 7B",     paid: false, keyField: "ollama",    pipeline: "asr_text" },
-  { key: "ollama:llama2:70b", label: "Ollama · Llama 2 70B",   paid: false, keyField: "ollama",    pipeline: "asr_text" },
+const CLOUD_BACKENDS: BackendDef[] = [
   // --- Paid ---
   { key: "openai:gpt-4o-audio-preview", label: "OpenAI · GPT-4o Audio", paid: true, keyField: "openai", pipeline: "both" },
   { key: "openai-realtime:gpt-4o-realtime-preview", label: "OpenAI · Realtime API", paid: true, keyField: "openai", pipeline: "both" },
@@ -305,11 +303,22 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
   const [delayRange, setDelayRange] = useState<number[]>([0]);
   const [gainRange, setGainRange] = useState<number[]>([-60]);
   const [pipelines, setPipelines] = useState<string[]>(["asr_text"]);
-  const [backends, setBackends] = useState<string[]>(["ollama:mistral"]);
+  const [backends, setBackends] = useState<string[]>([]);
   const [preview, setPreview] = useState<SweepPreview | null>(null);
 
   const keyStatus = useQuery({ queryKey: ["keyStatus"], queryFn: fetchKeyStatus });
+  const ollamaStatus = useQuery({ queryKey: ["ollamaModels"], queryFn: fetchOllamaModels, refetchInterval: 30000 });
   const keys = keyStatus.data;
+
+  // Build dynamic ALL_BACKENDS from Ollama discovery + cloud
+  const ollamaBackends: BackendDef[] = (ollamaStatus.data?.models ?? []).map((m) => ({
+    key: `ollama:${m.name}`,
+    label: `Ollama · ${m.name}${m.parameter_size ? ` (${m.parameter_size})` : ""}`,
+    paid: false,
+    keyField: "ollama" as keyof KeyStatusResponse,
+    pipeline: "asr_text" as const,
+  }));
+  const ALL_BACKENDS: BackendDef[] = [...ollamaBackends, ...CLOUD_BACKENDS];
 
   function buildConfig(): SweepConfigRequest {
     return {

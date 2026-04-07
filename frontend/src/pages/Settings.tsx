@@ -4,10 +4,12 @@ import {
   fetchSettings,
   updateSettings,
   fetchKeyStatus,
+  fetchOllamaModels,
   importSlurp,
   testLLM,
   type SettingsResponse,
   type KeyStatusResponse,
+  type OllamaStatusResponse,
   type SlurpImportResponse,
   type TestLLMResponse,
 } from "../api/client";
@@ -177,10 +179,7 @@ function QualityBadge({ quality }: { quality: string }) {
   );
 }
 
-const TEST_BACKENDS = [
-  { key: "ollama:mistral", label: "Ollama - Mistral" },
-  { key: "ollama:llama2", label: "Ollama - Llama 2" },
-  { key: "ollama:llama3", label: "Ollama - Llama 3" },
+const CLOUD_BACKENDS = [
   { key: "openai:gpt-4o-mini", label: "OpenAI - GPT-4o Mini" },
   { key: "openai:gpt-4o-audio-preview", label: "OpenAI - GPT-4o Audio" },
   { key: "openai-realtime:gpt-4o-realtime-preview", label: "OpenAI - Realtime API" },
@@ -189,15 +188,30 @@ const TEST_BACKENDS = [
 ];
 
 function TestLLMPanel() {
-  const [selectedBackend, setSelectedBackend] = useState(TEST_BACKENDS[0].key);
+  const ollama = useQuery({ queryKey: ["ollamaModels"], queryFn: fetchOllamaModels, refetchInterval: 30000 });
+  const [selectedBackend, setSelectedBackend] = useState(CLOUD_BACKENDS[0].key);
   const [testing, setTesting] = useState(false);
   const [result, setResult] = useState<TestLLMResponse | null>(null);
+
+  // Build dynamic backend list: Ollama models first, then cloud
+  const allBackends = [
+    ...(ollama.data?.models ?? []).map((m) => ({
+      key: `ollama:${m.name}`,
+      label: `Ollama - ${m.name}${m.size_gb ? ` (${m.size_gb}GB)` : ""}${m.parameter_size ? ` ${m.parameter_size}` : ""}`,
+    })),
+    ...CLOUD_BACKENDS,
+  ];
+
+  // Auto-select first Ollama model if available and current selection is default
+  const effectiveBackend = allBackends.find((b) => b.key === selectedBackend)
+    ? selectedBackend
+    : allBackends[0]?.key ?? CLOUD_BACKENDS[0].key;
 
   const handleTest = async () => {
     setTesting(true);
     setResult(null);
     try {
-      const res = await testLLM(selectedBackend);
+      const res = await testLLM(effectiveBackend);
       setResult(res);
     } catch (e: unknown) {
       setResult({ success: false, response: null, error: e instanceof Error ? e.message : "Failed", latency_ms: null });
@@ -208,15 +222,39 @@ function TestLLMPanel() {
 
   return (
     <div>
+      {/* Ollama status indicator */}
+      <div className="flex items-center gap-2 mb-3">
+        <span className={`inline-block w-2.5 h-2.5 rounded-full ${
+          ollama.data?.connected ? "bg-green-500" : "bg-red-400"
+        }`} />
+        <span className="text-xs text-gray-500">
+          Ollama: {ollama.data?.connected
+            ? `${ollama.data.models.length} model${ollama.data.models.length !== 1 ? "s" : ""} available at ${ollama.data.url}`
+            : ollama.data?.error || "Not connected"
+          }
+        </span>
+      </div>
+
       <div className="flex flex-col sm:flex-row gap-3">
         <select
-          value={selectedBackend}
+          value={effectiveBackend}
           onChange={(e) => { setSelectedBackend(e.target.value); setResult(null); }}
           className="border border-gray-200 rounded-lg px-3 py-2 text-sm flex-1"
         >
-          {TEST_BACKENDS.map((b) => (
-            <option key={b.key} value={b.key}>{b.label}</option>
-          ))}
+          {ollama.data?.models && ollama.data.models.length > 0 && (
+            <optgroup label="Local (Ollama)">
+              {ollama.data.models.map((m) => (
+                <option key={m.name} value={`ollama:${m.name}`}>
+                  {m.name}{m.size_gb ? ` (${m.size_gb}GB)` : ""}{m.parameter_size ? ` ${m.parameter_size}` : ""}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          <optgroup label="Cloud APIs">
+            {CLOUD_BACKENDS.map((b) => (
+              <option key={b.key} value={b.key}>{b.label}</option>
+            ))}
+          </optgroup>
         </select>
         <button
           onClick={handleTest}
@@ -250,11 +288,11 @@ function TestLLMPanel() {
           )}
         </div>
       )}
-      {selectedBackend.startsWith("openai-realtime") && (
+      {effectiveBackend.startsWith("openai-realtime") && (
         <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800">
           <p className="font-semibold mb-1">OpenAI Realtime API</p>
           <p>Uses WebSocket streaming for low-latency audio-in/audio-out. In test suites, select
-          "OpenAI Realtime API" as a backend with the "Audio → LLM (direct)" pipeline.
+          "OpenAI Realtime API" as a backend with the "Audio &rarr; LLM (direct)" pipeline.
           Requires an OpenAI API key with realtime access.</p>
         </div>
       )}

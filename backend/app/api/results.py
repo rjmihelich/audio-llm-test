@@ -680,9 +680,13 @@ def _format_stats_for_prompt(stats_summary: dict) -> str:
 
 @router.post("/dashboard/insights", response_model=InsightsResponse)
 async def generate_insights(
+    backend: str = Query(default="auto", description="LLM backend: auto, ollama:model, openai:model, anthropic:model, gemini:model"),
     session: AsyncSession = Depends(get_session),
 ):
-    """Generate LLM-powered insights from all completed test run results."""
+    """Generate LLM-powered insights from all completed test run results.
+
+    Uses the specified backend, or auto-detects the best available one.
+    """
     # Find all completed runs
     run_stmt = select(TestRun).where(TestRun.status == "completed")
     run_result = await session.execute(run_stmt)
@@ -721,38 +725,90 @@ async def generate_insights(
         "Be specific with numbers and percentages. Focus on actionable insights."
     )
 
-    # Call Ollama for LLM analysis
-    try:
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            resp = await client.post(
-                f"{settings.ollama_base_url}/api/generate",
-                json={
-                    "model": "mistral",
-                    "prompt": prompt_text,
-                    "stream": False,
-                },
-            )
-            resp.raise_for_status()
-            analysis = resp.json().get("response", "")
-    except httpx.ConnectError:
-        raise HTTPException(
-            503,
-            "Could not connect to Ollama. Ensure Ollama is running at "
-            f"{settings.ollama_base_url}",
-        )
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(
-            502,
-            f"Ollama returned an error: {exc.response.status_code} - {exc.response.text}",
-        )
-    except httpx.TimeoutException:
-        raise HTTPException(
-            504,
-            "Ollama request timed out. The model may be loading or the analysis too large.",
-        )
+    # Auto-detect best available backend
+    if backend == "auto":
+        backend = await _pick_best_backend()
+
+    analysis = await _call_llm(backend, prompt_text)
 
     return InsightsResponse(
         analysis=analysis,
         stats_summary=stats_summary,
         generated_at=datetime.now(timezone.utc).isoformat(),
     )
+
+
+async def _pick_best_backend() -> str:
+    """Auto-detect the best available LLM backend for insights."""
+    # 1. Try Ollama first (free, local)
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{settings.ollama_base_url}/api/tags")
+            if resp.status_code == 200:
+                models = resp.json().get("models", [])
+                if models:
+                    name = models[0].get("name", "mistral").replace(":latest", "")
+                    return f"ollama:{name}"
+    except Exception:
+        pass
+
+    # 2. Try paid APIs in order of preference
+    if settings.anthropic_api_key and len(settings.anthropic_api_key) > 10:
+        return "anthropic:claude-haiku-4-5-20251001"
+    if settings.openai_api_key and len(settings.openai_api_key) > 10:
+        return "openai:gpt-4o-mini"
+    if settings.google_api_key and len(settings.google_api_key) > 10:
+        return "gemini:gemini-2.0-flash"
+
+    raise HTTPException(503, "No LLM backend available. Configure Ollama, or add an API key in Settings.")
+
+
+async def _call_llm(backend: str, prompt: str) -> str:
+    """Call any supported LLM backend with a prompt and return the response text."""
+    import asyncio
+
+    prefix, _, model = backend.partition(":")
+
+    if prefix == "ollama":
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                resp = await client.post(
+                    f"{settings.ollama_base_url}/api/generate",
+                    json={"model": model or "mistral", "prompt": prompt, "stream": False},
+                )
+                resp.raise_for_status()
+                return resp.json().get("response", "")
+        except httpx.ConnectError:
+            raise HTTPException(503, f"Cannot connect to Ollama at {settings.ollama_base_url}")
+        except httpx.TimeoutException:
+            raise HTTPException(504, "Ollama request timed out")
+
+    elif prefix == "openai":
+        from openai import AsyncOpenAI
+        client = AsyncOpenAI(api_key=settings.openai_api_key)
+        resp = await client.chat.completions.create(
+            model=model or "gpt-4o-mini",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=2000,
+        )
+        return resp.choices[0].message.content or ""
+
+    elif prefix == "anthropic":
+        from anthropic import AsyncAnthropic
+        client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+        resp = await client.messages.create(
+            model=model or "claude-haiku-4-5-20251001",
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text if resp.content else ""
+
+    elif prefix == "gemini":
+        import google.generativeai as genai
+        genai.configure(api_key=settings.google_api_key)
+        gm = genai.GenerativeModel(model or "gemini-2.0-flash")
+        resp = await asyncio.to_thread(lambda: gm.generate_content(prompt))
+        return resp.text or ""
+
+    else:
+        raise HTTPException(400, f"Unknown LLM backend: {backend}")

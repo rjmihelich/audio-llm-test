@@ -520,8 +520,8 @@ export interface InsightsResponse {
   generated_at: string;
 }
 
-export function fetchInsights(): Promise<InsightsResponse> {
-  return request("/results/dashboard/insights", { method: "POST" });
+export function fetchInsights(backend = "auto"): Promise<InsightsResponse> {
+  return request(`/results/dashboard/insights?backend=${encodeURIComponent(backend)}`, { method: "POST" });
 }
 
 export function fetchDashboard(): Promise<DashboardResponse> {
@@ -577,6 +577,24 @@ export function updateSettings(
     method: "PATCH",
     body: JSON.stringify(updates),
   });
+}
+
+export interface OllamaModel {
+  name: string;
+  size_gb: number | null;
+  parameter_size: string | null;
+  modified_at: string | null;
+}
+
+export interface OllamaStatusResponse {
+  connected: boolean;
+  url: string;
+  models: OllamaModel[];
+  error: string | null;
+}
+
+export function fetchOllamaModels(): Promise<OllamaStatusResponse> {
+  return request("/settings/ollama-models");
 }
 
 export interface TestLLMResponse {

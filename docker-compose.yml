@@ -31,9 +31,12 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       ALT_DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/audio_llm_test
       ALT_REDIS_URL: redis://redis:6379
+      ALT_OLLAMA_BASE_URL: http://host.docker.internal:11434
     env_file:
       - .env
     volumes:
@@ -50,9 +53,12 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       ALT_DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/audio_llm_test
       ALT_REDIS_URL: redis://redis:6379
+      ALT_OLLAMA_BASE_URL: http://host.docker.internal:11434
     env_file:
       - .env
     volumes:

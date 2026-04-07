@@ -216,6 +216,65 @@ async def update_settings(req: UpdateKeysRequest):
 
 
 # ---------------------------------------------------------------------------
+# Ollama Model Discovery
+# ---------------------------------------------------------------------------
+
+class OllamaModel(BaseModel):
+    name: str
+    size_gb: float | None = None
+    parameter_size: str | None = None
+    modified_at: str | None = None
+
+
+class OllamaStatusResponse(BaseModel):
+    connected: bool
+    url: str
+    models: list[OllamaModel] = []
+    error: str | None = None
+
+
+@router.get("/ollama-models", response_model=OllamaStatusResponse)
+async def get_ollama_models():
+    """Poll Ollama for available models. Returns empty list if Ollama unreachable."""
+    import httpx
+
+    url = settings.ollama_base_url
+    try:
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            resp = await client.get(f"{url}/api/tags")
+            resp.raise_for_status()
+            data = resp.json()
+
+        models = []
+        for m in data.get("models", []):
+            name = m.get("name", "")
+            # Strip :latest suffix for cleaner display
+            display_name = name.replace(":latest", "") if name.endswith(":latest") else name
+            size_bytes = m.get("size", 0)
+            size_gb = round(size_bytes / (1024**3), 1) if size_bytes else None
+            details = m.get("details", {})
+            models.append(OllamaModel(
+                name=display_name,
+                size_gb=size_gb,
+                parameter_size=details.get("parameter_size"),
+                modified_at=m.get("modified_at"),
+            ))
+
+        return OllamaStatusResponse(connected=True, url=url, models=models)
+
+    except (httpx.ConnectError, httpx.TimeoutException):
+        return OllamaStatusResponse(
+            connected=False, url=url, models=[],
+            error=f"Cannot connect to Ollama at {url}",
+        )
+    except Exception as e:
+        return OllamaStatusResponse(
+            connected=False, url=url, models=[],
+            error=f"{type(e).__name__}: {e}",
+        )
+
+
+# ---------------------------------------------------------------------------
 # LLM Connection Test
 # ---------------------------------------------------------------------------
 
