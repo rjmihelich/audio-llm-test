@@ -111,7 +111,7 @@ export default function Results() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4 mb-8">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
         <StatsCard
           title="Total Tests"
           value={s?.total_tests ?? "--"}
@@ -152,6 +152,24 @@ export default function Results() {
               : "--"
           }
           trend="neutral"
+        />
+        <StatsCard
+          title="Mean WER"
+          value={
+            s?.mean_wer != null
+              ? `${(s.mean_wer * 100).toFixed(1)}%`
+              : "--"
+          }
+          subtitle={s?.wer_sample_size ? `n=${s.wer_sample_size}` : "Pipeline B only"}
+          trend={
+            s?.mean_wer != null
+              ? s.mean_wer <= 0.1
+                ? "up"
+                : s.mean_wer <= 0.3
+                  ? "neutral"
+                  : "down"
+              : "neutral"
+          }
         />
         <StatsCard
           title="Avg Latency"
@@ -212,6 +230,12 @@ function ResultsTab({ results }: { results: ResultResponse[] }) {
   ).length;
   const sttTotal = results.filter((r) => r.asr_transcript).length;
 
+  // Mean WER across results that have it
+  const werResults = results.filter((r) => r.wer != null);
+  const meanWer = werResults.length > 0
+    ? werResults.reduce((sum, r) => sum + r.wer!, 0) / werResults.length
+    : null;
+
   return (
     <div>
       {/* Pipeline summary */}
@@ -234,6 +258,12 @@ function ResultsTab({ results }: { results: ResultResponse[] }) {
             <p className="text-gray-500 text-xs">STT Accuracy</p>
             <p className="font-medium text-gray-900">
               {sttTotal > 0 ? `${sttCorrect}/${sttTotal} (${((sttCorrect / sttTotal) * 100).toFixed(0)}%)` : "--"}
+            </p>
+          </div>
+          <div>
+            <p className="text-gray-500 text-xs">Mean WER</p>
+            <p className={`font-medium ${meanWer != null ? (meanWer <= 0.1 ? "text-green-700" : meanWer <= 0.3 ? "text-amber-700" : "text-red-700") : "text-gray-900"}`}>
+              {meanWer != null ? `${(meanWer * 100).toFixed(1)}%` : "--"}
             </p>
           </div>
           <div>
@@ -442,13 +472,45 @@ function ResultsTab({ results }: { results: ResultResponse[] }) {
                           <p className="text-[10px] text-gray-400">Echo Delay</p>
                           <p className="font-medium text-gray-900">{r.delay_ms}ms</p>
                         </div>
+                        {r.wer != null && (
+                          <div className="bg-gray-50 rounded-lg px-3 py-2">
+                            <p className="text-[10px] text-gray-400">WER</p>
+                            <p className={`font-medium ${r.wer <= 0.1 ? "text-green-700" : r.wer <= 0.3 ? "text-amber-700" : "text-red-700"}`}>
+                              {(r.wer * 100).toFixed(1)}%
+                            </p>
+                          </div>
+                        )}
+                      </div>
+
+                      <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider pt-2">
+                        Latency Breakdown
+                      </h4>
+                      <div className="grid grid-cols-3 gap-2 text-sm">
                         <div className="bg-gray-50 rounded-lg px-3 py-2">
-                          <p className="text-[10px] text-gray-400">Latency</p>
+                          <p className="text-[10px] text-gray-400">Total</p>
                           <p className="font-medium text-gray-900">
                             {r.total_latency_ms != null ? `${r.total_latency_ms.toFixed(0)}ms` : "--"}
                           </p>
                         </div>
+                        <div className="bg-gray-50 rounded-lg px-3 py-2">
+                          <p className="text-[10px] text-gray-400">LLM</p>
+                          <p className="font-medium text-gray-900">
+                            {r.llm_latency_ms != null ? `${r.llm_latency_ms.toFixed(0)}ms` : "--"}
+                          </p>
+                        </div>
+                        <div className="bg-gray-50 rounded-lg px-3 py-2">
+                          <p className="text-[10px] text-gray-400">ASR</p>
+                          <p className="font-medium text-gray-900">
+                            {r.asr_latency_ms != null ? `${r.asr_latency_ms.toFixed(0)}ms` : "--"}
+                          </p>
+                        </div>
                       </div>
+                      {(r.input_tokens != null || r.output_tokens != null) && (
+                        <div className="flex gap-3 text-xs text-gray-500 pt-1">
+                          {r.input_tokens != null && <span>In: <span className="font-medium text-gray-700">{r.input_tokens.toLocaleString()} tok</span></span>}
+                          {r.output_tokens != null && <span>Out: <span className="font-medium text-gray-700">{r.output_tokens.toLocaleString()} tok</span></span>}
+                        </div>
+                      )}
                     </div>
                   </div>
 

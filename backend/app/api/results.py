@@ -24,6 +24,7 @@ from backend.app.stats.analysis import (
     pairwise_backend_comparison,
     parameter_effects_anova,
     summary_statistics,
+    wer_by_group,
 )
 from backend.app.stats.aggregation import pivot_heatmap
 
@@ -44,10 +45,15 @@ class ResultResponse(BaseModel):
     expected_action: str | None = None
     llm_response_text: str | None = None
     asr_transcript: str | None = None
+    wer: float | None = None
     eval_score: float | None = None
     eval_passed: bool | None = None
     evaluator_type: str | None = None
     total_latency_ms: float | None = None
+    llm_latency_ms: float | None = None
+    asr_latency_ms: float | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
     error: str | None = None
     error_stage: str | None = None
     voice_provider: str | None = None
@@ -66,8 +72,13 @@ class StatsResponse(BaseModel):
     overall_pass_rate: float | None
     overall_mean_score: float | None
     mean_latency_ms: float | None
+    mean_wer: float | None = None
+    median_wer: float | None = None
+    wer_sample_size: int | None = None
     accuracy_by_snr: list[dict] | None = None
     accuracy_by_backend: list[dict] | None = None
+    wer_by_snr: list[dict] | None = None
+    wer_by_backend: list[dict] | None = None
     backend_comparison: list[dict] | None = None
     parameter_effects: dict | None = None
 
@@ -111,10 +122,15 @@ async def _load_results_for_run(
             "expected_action": ce.expected_action if ce else None,
             "llm_response_text": tr.llm_response_text,
             "asr_transcript": tr.asr_transcript,
+            "wer": tr.wer,
             "eval_score": tr.evaluation_score,
             "eval_passed": tr.evaluation_passed,
             "evaluator_type": tr.evaluator_type,
-            "total_latency_ms": tr.llm_latency_ms,
+            "total_latency_ms": tr.total_latency_ms or tr.llm_latency_ms,
+            "llm_latency_ms": tr.llm_latency_ms,
+            "asr_latency_ms": tr.asr_latency_ms,
+            "input_tokens": tr.input_tokens,
+            "output_tokens": tr.output_tokens,
             "error": getattr(tr, "error", None) or ((tr.evaluation_details_json or {}).get("error") if tr.evaluation_details_json else None),
             "error_stage": getattr(tr, "error_stage", None),
             "voice_provider": voice.provider if voice else None,
@@ -181,10 +197,15 @@ async def query_results(
             expected_action=ce.expected_action if ce else None,
             llm_response_text=tr.llm_response_text,
             asr_transcript=tr.asr_transcript,
+            wer=tr.wer,
             eval_score=tr.evaluation_score,
             eval_passed=tr.evaluation_passed,
             evaluator_type=tr.evaluator_type,
-            total_latency_ms=tr.llm_latency_ms,
+            total_latency_ms=tr.total_latency_ms or tr.llm_latency_ms,
+            llm_latency_ms=tr.llm_latency_ms,
+            asr_latency_ms=tr.asr_latency_ms,
+            input_tokens=tr.input_tokens,
+            output_tokens=tr.output_tokens,
             error=getattr(tr, "error", None) or ((tr.evaluation_details_json or {}).get("error") if tr.evaluation_details_json else None),
             error_stage=getattr(tr, "error_stage", None),
             voice_provider=voice.provider if voice else None,
@@ -206,10 +227,13 @@ class DashboardResponse(BaseModel):
     overall_pass_rate: float | None
     overall_mean_score: float | None
     mean_latency_ms: float | None
+    mean_wer: float | None = None
     accuracy_by_snr: list[dict] | None = None
     accuracy_by_speech_level: list[dict] | None = None
     accuracy_by_noise: list[dict] | None = None
     accuracy_by_backend: list[dict] | None = None
+    wer_by_snr: list[dict] | None = None
+    wer_by_backend: list[dict] | None = None
     echo_heatmap: dict | None = None
     speech_level_heatmap: dict | None = None
     latency_by_backend: list[dict] | None = None
@@ -315,6 +339,10 @@ async def get_dashboard_aggregate(
                 "col_name": "snr_db",
             }
 
+    # WER by SNR and backend (Pipeline B only)
+    wer_snr_df = wer_by_group(df, "snr_db")
+    wer_backend_df = wer_by_group(df, "llm_backend")
+
     # Latency by backend
     latency_data = None
     if "total_latency_ms" in df.columns and "llm_backend" in df.columns:
@@ -348,6 +376,9 @@ async def get_dashboard_aggregate(
         overall_pass_rate=summary.get("overall_pass_rate"),
         overall_mean_score=summary.get("overall_mean_score"),
         mean_latency_ms=summary.get("mean_latency_ms"),
+        mean_wer=summary.get("mean_wer"),
+        wer_by_snr=wer_snr_df.to_dict("records") if not wer_snr_df.empty else None,
+        wer_by_backend=wer_backend_df.to_dict("records") if not wer_backend_df.empty else None,
         accuracy_by_snr=snr_acc.to_dict("records") if not snr_acc.empty else None,
         accuracy_by_speech_level=speech_level_acc.to_dict("records") if not speech_level_acc.empty else None,
         accuracy_by_noise=noise_acc.to_dict("records") if not noise_acc.empty else None,
@@ -402,6 +433,12 @@ async def get_run_stats(
     backend_df = accuracy_by_group(df, "llm_backend")
     accuracy_by_backend = backend_df.to_dict("records") if not backend_df.empty else None
 
+    # WER by SNR and backend (Pipeline B only)
+    wer_snr_df = wer_by_group(df, "snr_db")
+    wer_snr = wer_snr_df.to_dict("records") if not wer_snr_df.empty else None
+    wer_backend_df = wer_by_group(df, "llm_backend")
+    wer_backend = wer_backend_df.to_dict("records") if not wer_backend_df.empty else None
+
     # Pairwise backend comparison
     comparison_df = pairwise_backend_comparison(df)
     backend_comparison = comparison_df.to_dict("records") if not comparison_df.empty else None
@@ -417,8 +454,13 @@ async def get_run_stats(
         overall_pass_rate=summary.get("overall_pass_rate"),
         overall_mean_score=summary.get("overall_mean_score"),
         mean_latency_ms=summary.get("mean_latency_ms"),
+        mean_wer=summary.get("mean_wer"),
+        median_wer=summary.get("median_wer"),
+        wer_sample_size=summary.get("wer_sample_size"),
         accuracy_by_snr=accuracy_by_snr,
         accuracy_by_backend=accuracy_by_backend,
+        wer_by_snr=wer_snr,
+        wer_by_backend=wer_backend,
         backend_comparison=backend_comparison,
         parameter_effects=param_effects,
     )

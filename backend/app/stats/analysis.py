@@ -193,14 +193,60 @@ def parameter_effects_anova(
     return results
 
 
+def wer_by_group(
+    df: pd.DataFrame,
+    group_col: str,
+    wer_col: str = "wer",
+) -> pd.DataFrame:
+    """Compute mean WER grouped by a parameter.
+
+    Returns DataFrame with columns: group, mean_wer, count, wer_ci_low, wer_ci_high.
+    Only includes rows where WER is available (Pipeline B with ASR transcripts).
+    """
+    wer_df = df[df[wer_col].notna()].copy() if wer_col in df.columns else pd.DataFrame()
+    if wer_df.empty or group_col not in wer_df.columns:
+        return pd.DataFrame()
+
+    results = []
+    for group_val, group_df in wer_df.groupby(group_col):
+        wers = group_df[wer_col].dropna()
+        n = len(wers)
+        if n == 0:
+            continue
+
+        mean_wer = wers.mean()
+        if n >= 30:
+            se = wers.std(ddof=1) / np.sqrt(n)
+            ci = stats.t.interval(0.95, df=n - 1, loc=mean_wer, scale=se)
+        else:
+            ci = _bootstrap_ci(wers.values, np.mean)
+
+        results.append({
+            "group": group_val,
+            "mean_wer": float(mean_wer),
+            "count": n,
+            "wer_ci_low": float(max(0.0, ci[0])),
+            "wer_ci_high": float(ci[1]),
+        })
+
+    return pd.DataFrame(results)
+
+
 def summary_statistics(df: pd.DataFrame) -> dict:
     """Compute overall summary statistics for a results DataFrame."""
-    return {
+    out: dict = {
         "total_tests": len(df),
-        "completed": df["eval_score"].notna().sum(),
-        "errors": df["error"].notna().sum(),
-        "overall_pass_rate": float(df["eval_passed"].mean()) if "eval_passed" in df else None,
-        "overall_mean_score": float(df["eval_score"].mean()) if "eval_score" in df else None,
-        "mean_latency_ms": float(df["total_latency_ms"].mean()) if "total_latency_ms" in df else None,
-        "median_latency_ms": float(df["total_latency_ms"].median()) if "total_latency_ms" in df else None,
+        "completed": int(df["eval_score"].notna().sum()),
+        "errors": int(df["error"].notna().sum()),
+        "overall_pass_rate": float(df["eval_passed"].mean()) if "eval_passed" in df and df["eval_passed"].notna().any() else None,
+        "overall_mean_score": float(df["eval_score"].mean()) if "eval_score" in df and df["eval_score"].notna().any() else None,
+        "mean_latency_ms": float(df["total_latency_ms"].mean()) if "total_latency_ms" in df and df["total_latency_ms"].notna().any() else None,
+        "median_latency_ms": float(df["total_latency_ms"].median()) if "total_latency_ms" in df and df["total_latency_ms"].notna().any() else None,
     }
+    # WER summary — only for Pipeline B rows that have ASR transcripts
+    if "wer" in df.columns and df["wer"].notna().any():
+        wer_series = df["wer"].dropna()
+        out["mean_wer"] = float(wer_series.mean())
+        out["median_wer"] = float(wer_series.median())
+        out["wer_sample_size"] = int(len(wer_series))
+    return out

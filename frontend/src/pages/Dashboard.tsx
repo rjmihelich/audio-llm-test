@@ -305,6 +305,82 @@ function ParameterEffects({ data }: { data: Record<string, unknown> }) {
   );
 }
 
+// -- WER vs SNR line chart --
+function WERBySNR({ data }: { data: Array<Record<string, unknown>> }) {
+  const chartData = data
+    .map((d) => ({
+      snr: Number(d.group),
+      wer: Math.round(Number(d.mean_wer) * 1000) / 10, // to percent, 1 dp
+      count: Number(d.count),
+    }))
+    .sort((a, b) => a.snr - b.snr);
+
+  return (
+    <ChartCard title="Word Error Rate vs SNR" subtitle="Mean WER (Pipeline B) by signal-to-noise ratio">
+      <ResponsiveContainer width="100%" height={280}>
+        <LineChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis dataKey="snr" label={{ value: "SNR (dB)", position: "bottom", offset: -5 }} tick={{ fontSize: 12 }} />
+          <YAxis tickFormatter={(v) => `${v}%`} tick={{ fontSize: 12 }} />
+          <Tooltip formatter={(val: number) => [`${val}%`, "Mean WER"]} labelFormatter={(l) => `SNR: ${l} dB`} />
+          <Line type="monotone" dataKey="wer" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 4, fill: "#ef4444" }} name="Mean WER" />
+        </LineChart>
+      </ResponsiveContainer>
+    </ChartCard>
+  );
+}
+
+// -- WER by backend bar chart --
+function WERByBackend({ data }: { data: Array<Record<string, unknown>> }) {
+  const chartData = data.map((d) => ({
+    backend: String(d.group),
+    wer: Math.round(Number(d.mean_wer) * 1000) / 10,
+    count: Number(d.count),
+  }));
+
+  return (
+    <ChartCard title="Word Error Rate by Backend" subtitle="Mean WER (Pipeline B) per LLM backend">
+      <ResponsiveContainer width="100%" height={280}>
+        <BarChart data={chartData} layout="vertical" margin={{ top: 10, right: 20, left: 40, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis type="number" tickFormatter={(v) => `${v}%`} tick={{ fontSize: 12 }} />
+          <YAxis type="category" dataKey="backend" tick={{ fontSize: 11 }} width={75} />
+          <Tooltip formatter={(val: number) => [`${val}%`, "Mean WER"]} />
+          <Bar dataKey="wer" name="Mean WER" fill="#ef4444" radius={[0, 4, 4, 0]} barSize={18} />
+        </BarChart>
+      </ResponsiveContainer>
+    </ChartCard>
+  );
+}
+
+// -- Task completion rate over time --
+function TaskCompletionHistory({ data }: { data: Array<Record<string, unknown>> }) {
+  const chartData = data.map((d) => ({
+    run: String(d.run_id),
+    passRate: Math.round(Number(d.pass_rate) * 100),
+    meanScore: d.mean_score ? Math.round(Number(d.mean_score) * 100) : null,
+    cases: Number(d.total_cases),
+  }));
+
+  return (
+    <ChartCard title="Task Completion Rate Over Time" subtitle="Pass rate trend across completed runs">
+      <ResponsiveContainer width="100%" height={220}>
+        <LineChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis dataKey="run" tick={{ fontSize: 10 }} />
+          <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} tick={{ fontSize: 12 }} />
+          <Tooltip formatter={(val: number, name: string) => [`${val}%`, name]} />
+          <Legend verticalAlign="top" height={36} />
+          <Line type="monotone" dataKey="passRate" stroke="#3b82f6" strokeWidth={2.5} dot={{ r: 4, fill: "#3b82f6" }} name="Task Completion" />
+          {chartData.some((d) => d.meanScore !== null) && (
+            <Line type="monotone" dataKey="meanScore" stroke="#10b981" strokeWidth={2} strokeDasharray="4 4" dot={{ r: 3 }} name="Mean Score" />
+          )}
+        </LineChart>
+      </ResponsiveContainer>
+    </ChartCard>
+  );
+}
+
 // -- Run history trend --
 function RunHistory({ data }: { data: Array<Record<string, unknown>> }) {
   const chartData = data.map((d, i) => ({
@@ -528,7 +604,7 @@ export default function Dashboard() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-6 gap-4">
         <StatsCard title="Completed Runs" value={d?.total_runs ?? 0} trend="neutral" />
         <StatsCard title="Total Cases" value={d?.total_cases ?? 0} trend="neutral" />
         <StatsCard
@@ -540,6 +616,12 @@ export default function Dashboard() {
           title="Mean Score"
           value={d?.overall_mean_score != null ? `${(d.overall_mean_score * 100).toFixed(1)}%` : "--"}
           trend="neutral"
+        />
+        <StatsCard
+          title="Mean WER"
+          value={d?.mean_wer != null ? `${(d.mean_wer * 100).toFixed(1)}%` : "--"}
+          subtitle="Pipeline B only"
+          trend={d?.mean_wer != null ? (d.mean_wer <= 0.1 ? "up" : d.mean_wer <= 0.3 ? "neutral" : "down") : "neutral"}
         />
         <StatsCard
           title="Mean Latency"
@@ -625,7 +707,35 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* Row 4: Voice provider + Corpus category */}
+          {/* Row 4: WER charts */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {d.wer_by_snr && d.wer_by_snr.length > 1 ? (
+              <WERBySNR data={d.wer_by_snr} />
+            ) : (
+              <ChartCard title="Word Error Rate vs SNR" subtitle="Run Pipeline B (ASR) tests with multiple SNR values">
+                <div className="h-64 flex items-center justify-center text-gray-300 text-sm">
+                  Requires Pipeline B (asr_text) with multiple SNR values
+                </div>
+              </ChartCard>
+            )}
+
+            {d.wer_by_backend && d.wer_by_backend.length > 0 ? (
+              <WERByBackend data={d.wer_by_backend} />
+            ) : (
+              <ChartCard title="Word Error Rate by Backend" subtitle="Run Pipeline B (ASR) tests to see WER per backend">
+                <div className="h-64 flex items-center justify-center text-gray-300 text-sm">
+                  Requires Pipeline B (asr_text) tests
+                </div>
+              </ChartCard>
+            )}
+          </div>
+
+          {/* Row 5: Task completion rate history */}
+          {d.run_history && d.run_history.length > 1 && (
+            <TaskCompletionHistory data={d.run_history} />
+          )}
+
+          {/* Row 6: Voice provider + Corpus category */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {d.accuracy_by_voice_provider && d.accuracy_by_voice_provider.length > 0 ? (
               <VoiceProviderComparison data={d.accuracy_by_voice_provider} />
@@ -647,13 +757,6 @@ export default function Dashboard() {
               </ChartCard>
             )}
           </div>
-
-          {/* Row 5: Run history */}
-          {d.run_history && d.run_history.length > 1 && (
-            <div className="grid grid-cols-1 gap-4">
-              <RunHistory data={d.run_history} />
-            </div>
-          )}
 
           {/* Recent runs table */}
           <div className="bg-white rounded-xl border border-gray-200 shadow-sm">

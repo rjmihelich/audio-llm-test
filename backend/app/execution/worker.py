@@ -16,6 +16,7 @@ from sqlalchemy import select
 from ..config import settings
 from ..models.base import async_session
 from ..models.run import TestRun, TestResult
+from ..evaluation.metrics import word_error_rate
 from ..models.test import TestCase, TestSuite
 from ..models.speech import SpeechSample, CorpusEntry, Voice
 from ..execution.scheduler import TestScheduler, TestCaseConfig, TestResultRecord
@@ -361,18 +362,38 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
             _result_times: list[float] = []  # Track timestamps for rate calculation
 
             async def on_result_callback(record: TestResultRecord):
-                async with async_session() as result_session:
-                    pr = record.pipeline_result
-                    er = record.evaluation_result
-                    has_error = record.is_error
-                    backend_key = case_backend_map.get(record.test_case_id, "")
+                pr = record.pipeline_result
+                er = record.evaluation_result
+                has_error = record.is_error
+                backend_key = case_backend_map.get(record.test_case_id, "")
 
+                # Resolve test case config for original text (needed for WER)
+                tc_cfg = None
+                for cfg in test_case_configs:
+                    if cfg.id == record.test_case_id:
+                        tc_cfg = cfg
+                        break
+
+                # Compute WER when ASR transcript and reference text are both available
+                wer_value = None
+                if pr.transcription and pr.transcription.text and tc_cfg and tc_cfg.original_text:
+                    try:
+                        wer_value = word_error_rate(tc_cfg.original_text, pr.transcription.text)
+                    except Exception:
+                        pass
+
+                async with async_session() as result_session:
                     test_result = TestResult(
                         test_run_id=run_uuid,
                         test_case_id=uuid.UUID(record.test_case_id),
                         llm_response_text=pr.llm_response.text if pr.llm_response else None,
                         llm_latency_ms=pr.llm_response.latency_ms if pr.llm_response else None,
                         asr_transcript=pr.transcription.text if pr.transcription else None,
+                        wer=wer_value,
+                        total_latency_ms=pr.total_latency_ms if pr.total_latency_ms else None,
+                        asr_latency_ms=pr.transcription.latency_ms if pr.transcription else None,
+                        input_tokens=pr.llm_response.input_tokens if pr.llm_response else None,
+                        output_tokens=pr.llm_response.output_tokens if pr.llm_response else None,
                         evaluation_score=er.score if er else (0.0 if has_error else None),
                         evaluation_passed=er.passed if er else (False if has_error else None),
                         evaluation_details_json=er.details if er else None,
@@ -402,13 +423,6 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                 while _result_times and _result_times[0] < cutoff:
                     _result_times.pop(0)
                 cases_per_min = len(_result_times)  # count in last 60s = per min
-
-                # Find the test case config for this result
-                tc_cfg = None
-                for cfg in test_case_configs:
-                    if cfg.id == record.test_case_id:
-                        tc_cfg = cfg
-                        break
 
                 # Publish activity to Redis
                 completed_so_far = len(_result_times) + (test_run.completed_cases if test_run else 0)

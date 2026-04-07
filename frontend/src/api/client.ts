@@ -61,8 +61,13 @@ export interface StatsResponse {
   overall_pass_rate: number | null;
   overall_mean_score: number | null;
   mean_latency_ms: number | null;
+  mean_wer: number | null;
+  median_wer: number | null;
+  wer_sample_size: number | null;
   accuracy_by_snr: Array<Record<string, unknown>> | null;
   accuracy_by_backend: Array<Record<string, unknown>> | null;
+  wer_by_snr: Array<Record<string, unknown>> | null;
+  wer_by_backend: Array<Record<string, unknown>> | null;
   backend_comparison: Array<Record<string, unknown>> | null;
   parameter_effects: Record<string, unknown> | null;
 }
@@ -89,10 +94,15 @@ export interface ResultResponse {
   expected_action: string | null;
   llm_response_text: string | null;
   asr_transcript: string | null;
+  wer: number | null;
   eval_score: number | null;
   eval_passed: boolean | null;
   evaluator_type: string | null;
   total_latency_ms: number | null;
+  llm_latency_ms: number | null;
+  asr_latency_ms: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
   error: string | null;
   error_stage: string | null;
   created_at: string | null;
@@ -504,10 +514,13 @@ export interface DashboardResponse {
   overall_pass_rate: number | null;
   overall_mean_score: number | null;
   mean_latency_ms: number | null;
+  mean_wer: number | null;
   accuracy_by_snr: Array<Record<string, unknown>> | null;
   accuracy_by_speech_level: Array<Record<string, unknown>> | null;
   accuracy_by_noise: Array<Record<string, unknown>> | null;
   accuracy_by_backend: Array<Record<string, unknown>> | null;
+  wer_by_snr: Array<Record<string, unknown>> | null;
+  wer_by_backend: Array<Record<string, unknown>> | null;
   speech_level_heatmap: {
     row_labels: number[];
     col_labels: number[];
