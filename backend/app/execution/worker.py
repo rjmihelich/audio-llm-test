@@ -86,6 +86,7 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
     async with async_session() as session:
         try:
             # 1. Load TestRun
+            await broadcast_progress(run_id, {"type": "info", "message": "Loading test run..."})
             run_uuid = uuid.UUID(run_id) if isinstance(run_id, str) else run_id
             test_run = await session.get(TestRun, run_uuid)
             if not test_run:
@@ -93,31 +94,41 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                 return
 
             # 2. Load TestSuite with test cases
+            await broadcast_progress(run_id, {"type": "info", "message": "Loading test suite configuration..."})
             test_suite = await session.get(TestSuite, test_run.test_suite_id)
             if not test_suite:
                 logger.error(f"TestSuite not found: {test_run.test_suite_id}")
                 return
 
             # Load test cases for this suite
+            await broadcast_progress(run_id, {"type": "info", "message": f"Loading test cases for suite '{test_suite.name}'..."})
             tc_result = await session.execute(
                 select(TestCase).where(TestCase.test_suite_id == test_suite.id)
             )
             test_cases = list(tc_result.scalars().all())
+            await broadcast_progress(run_id, {"type": "info", "message": f"Loaded {len(test_cases)} test cases"})
 
             # Random subset if sample_size specified
             if sample_size and sample_size < len(test_cases):
                 import random
                 test_cases = random.sample(test_cases, sample_size)
                 logger.info(f"Quick test: selected {sample_size} random cases from {len(test_cases) + sample_size - sample_size}")
+                await broadcast_progress(run_id, {"type": "info", "message": f"Quick test mode: randomly selected {sample_size} cases"})
 
             # Eagerly load speech_sample and corpus_entry for each test case
-            for tc in test_cases:
+            await broadcast_progress(run_id, {"type": "info", "message": f"Loading audio samples for {len(test_cases)} test cases..."})
+            for i, tc in enumerate(test_cases):
                 if tc.speech_sample_id:
                     sample = await session.get(SpeechSample, tc.speech_sample_id)
                     if sample and sample.corpus_entry_id:
                         await session.get(CorpusEntry, sample.corpus_entry_id)
+                # Broadcast progress every 500 cases for large suites
+                if (i + 1) % 500 == 0:
+                    await broadcast_progress(run_id, {"type": "info", "message": f"Loaded {i + 1}/{len(test_cases)} audio samples..."})
+            await broadcast_progress(run_id, {"type": "info", "message": f"All {len(test_cases)} audio samples loaded"})
 
             # 3. Query already-completed TestResult test_case_ids for resume
+            await broadcast_progress(run_id, {"type": "info", "message": "Checking for previously completed results..."})
             completed_result = await session.execute(
                 select(TestResult.test_case_id).where(TestResult.test_run_id == run_uuid)
             )
@@ -129,20 +140,28 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                 if str(tc.id) in completed_tc_ids:
                     completed_hashes.add(tc.deterministic_hash)
 
+            if completed_tc_ids:
+                await broadcast_progress(run_id, {"type": "info", "message": f"Found {len(completed_tc_ids)} previously completed results (will skip)"})
+            else:
+                await broadcast_progress(run_id, {"type": "info", "message": "No previous results found — starting fresh"})
+
             # 4. Update TestRun status to running
             test_run.status = "running"
             test_run.started_at = datetime.utcnow()
             test_run.total_cases = len(test_cases)
             await session.commit()
+            await broadcast_progress(run_id, {"type": "info", "message": "Run status set to running"})
 
             # 5. Initialize LLM backends
             unique_backends = {tc.llm_backend for tc in test_cases}
+            await broadcast_progress(run_id, {"type": "info", "message": f"Initializing {len(unique_backends)} LLM backend(s): {', '.join(sorted(unique_backends))}"})
             backends: dict[str, object] = {}
             init_errors: list[str] = []
             for backend_key in unique_backends:
                 try:
                     backends[backend_key] = _init_backend(backend_key)
                     logger.info(f"Backend initialized: {backend_key}")
+                    await broadcast_progress(run_id, {"type": "info", "message": f"✓ Backend ready: {backend_key}"})
                 except Exception as e:
                     error_msg = f"Failed to init backend '{backend_key}': {type(e).__name__}: {e}"
                     logger.error(error_msg, exc_info=True)
@@ -170,6 +189,7 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
             }
 
             # 6. Initialize evaluators
+            await broadcast_progress(run_id, {"type": "info", "message": "Initializing evaluators..."})
             # Use the first OpenAI backend as the judge LLM, or create one
             judge_backend = None
             for bk, bv in backends.items():
@@ -185,9 +205,15 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
             if judge_backend:
                 evaluators["llm_judge"] = LLMJudgeEvaluator(judge_backend=judge_backend)
 
+            eval_names = list(evaluators.keys())
+            await broadcast_progress(run_id, {"type": "info", "message": f"✓ Evaluators ready: {', '.join(eval_names)}"})
+
             # 7. Initialize ASR backend if any test case uses asr_text pipeline
             asr_backend = None
-            if any(tc.pipeline == "asr_text" for tc in test_cases):
+            asr_needed = any(tc.pipeline == "asr_text" for tc in test_cases)
+            if not asr_needed:
+                await broadcast_progress(run_id, {"type": "info", "message": "No ASR pipeline cases — skipping STT init"})
+            if asr_needed:
                 try:
                     if settings.default_stt_backend.startswith("deepgram") and settings.deepgram_api_key:
                         asr_backend = DeepgramSTTBackend(api_key=settings.deepgram_api_key)
@@ -214,6 +240,7 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                     })
 
             # 8. Convert TestCase DB objects to TestCaseConfig
+            await broadcast_progress(run_id, {"type": "info", "message": f"Preparing {len(test_cases)} test configurations..."})
             test_case_configs: list[TestCaseConfig] = []
             for tc in test_cases:
                 speech_sample = await session.get(SpeechSample, tc.speech_sample_id)
@@ -235,6 +262,8 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                     llm_backend=tc.llm_backend,
                 )
                 test_case_configs.append(config)
+
+            await broadcast_progress(run_id, {"type": "info", "message": f"✓ {len(test_case_configs)} test configurations ready"})
 
             # 9. Create callbacks
             async def on_result_callback(record: TestResultRecord):
@@ -310,6 +339,9 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                 on_result=on_result_callback,
                 on_progress=on_progress_callback,
             )
+
+            remaining = len(test_case_configs) - len(completed_hashes)
+            await broadcast_progress(run_id, {"type": "info", "message": f"🚀 Starting execution: {remaining} cases with {max_workers} workers"})
 
             await scheduler.run(test_case_configs, completed_ids=completed_hashes)
 
