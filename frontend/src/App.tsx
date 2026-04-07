@@ -13,6 +13,7 @@ const navItems = [
   { to: "/tests", label: "Test Suites", icon: "\u{1F9EA}" },
   { to: "/runs", label: "Runs & Results", icon: "\u{1F3AF}" },
   { to: "/settings", label: "Settings", icon: "\u{2699}" },
+  { to: "/pipeline-studio", label: "Pipeline Studio", icon: "\u{1F527}", external: true },
 ];
 
 export default function App() {
@@ -25,23 +26,36 @@ export default function App() {
           <p className="text-xs text-slate-400 mt-0.5">Quality Evaluation Platform</p>
         </div>
         <nav className="flex-1 px-3 py-4 space-y-1">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === "/"}
-              className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-                  isActive
-                    ? "bg-slate-700 text-white"
-                    : "text-slate-300 hover:bg-slate-700/50 hover:text-white"
-                }`
-              }
-            >
-              <span className="text-base">{item.icon}</span>
-              {item.label}
-            </NavLink>
-          ))}
+          {navItems.map((item) =>
+            (item as { external?: boolean }).external ? (
+              <a
+                key={item.to}
+                href="http://localhost:5174"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-700/50 hover:text-white transition-colors"
+              >
+                <span className="text-base">{item.icon}</span>
+                {item.label}
+              </a>
+            ) : (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.to === "/"}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+                    isActive
+                      ? "bg-slate-700 text-white"
+                      : "text-slate-300 hover:bg-slate-700/50 hover:text-white"
+                  }`
+                }
+              >
+                <span className="text-base">{item.icon}</span>
+                {item.label}
+              </NavLink>
+            )
+          )}
         </nav>
         <div className="px-6 py-4 border-t border-slate-700 text-xs text-slate-500">
           v1.0.0

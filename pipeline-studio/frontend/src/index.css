@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+/* React Flow base styles */
+.react-flow__node {
+  font-size: 12px;
+}
+
+.react-flow__handle {
+  width: 10px;
+  height: 10px;
+}
+
+/* Feedback edges render as dashed */
+.react-flow__edge.feedback .react-flow__edge-path {
+  stroke-dasharray: 8 4;
+  stroke: #F97316;
+}
+
+/* Port type colors on handles */
+.handle-audio {
+  background-color: #3B82F6 !important;
+}
+.handle-text {
+  background-color: #22C55E !important;
+}
+.handle-evaluation {
+  background-color: #F97316 !important;
+}
