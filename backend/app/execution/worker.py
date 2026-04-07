@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from arq.connections import RedisSettings
+from arq.connections import RedisSettings, create_pool
 from sqlalchemy import select
 
 from ..config import settings
@@ -39,6 +41,96 @@ from ..audio.io import save_audio
 from ..api.ws import broadcast_progress
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Redis activity tracking
+# ---------------------------------------------------------------------------
+
+_redis_pool = None
+
+
+async def _get_redis():
+    """Get or create Redis connection for activity publishing."""
+    global _redis_pool
+    if _redis_pool is None:
+        _redis_pool = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+    return _redis_pool
+
+
+async def publish_activity(run_id: str, data: dict):
+    """Publish current worker activity to Redis for monitoring."""
+    try:
+        redis = await _get_redis()
+        data["run_id"] = run_id
+        data["timestamp"] = datetime.now(timezone.utc).isoformat()
+        await redis.set("worker:activity", json.dumps(data), ex=120)
+        await redis.set("worker:heartbeat", datetime.now(timezone.utc).isoformat(), ex=120)
+    except Exception:
+        pass  # Don't let monitoring failures break execution
+
+
+async def publish_log(level: str, message: str, **extra):
+    """Push a log entry to Redis for the monitoring UI."""
+    try:
+        redis = await _get_redis()
+        entry = {
+            "level": level,
+            "message": message,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            **extra,
+        }
+        await redis.lpush("worker:log", json.dumps(entry))
+        await redis.ltrim("worker:log", 0, 99)  # Keep last 100
+    except Exception:
+        pass
+
+
+async def publish_error(run_id: str, error_msg: str, backend: str = "", stage: str = ""):
+    """Record an error for monitoring and error-budget tracking."""
+    try:
+        redis = await _get_redis()
+        entry = {
+            "run_id": run_id,
+            "error": error_msg,
+            "backend": backend,
+            "stage": stage,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
+        # Append to recent errors (capped at 50)
+        raw = await redis.get("worker:recent_errors")
+        errors = json.loads(raw) if raw else []
+        errors.append(entry)
+        errors = errors[-50:]
+        await redis.set("worker:recent_errors", json.dumps(errors), ex=7200)
+
+        # Update per-backend error budget
+        budget_raw = await redis.get("worker:error_budget")
+        budget = json.loads(budget_raw) if budget_raw else {}
+        if backend:
+            bdata = budget.get(backend, {"errors": 0, "total": 0, "consecutive": 0})
+            bdata["errors"] = bdata.get("errors", 0) + 1
+            bdata["consecutive"] = bdata.get("consecutive", 0) + 1
+            budget[backend] = bdata
+            await redis.set("worker:error_budget", json.dumps(budget), ex=7200)
+    except Exception:
+        pass
+
+
+async def clear_backend_consecutive(backend: str):
+    """Reset consecutive error count on success (for self-healing)."""
+    try:
+        redis = await _get_redis()
+        budget_raw = await redis.get("worker:error_budget")
+        budget = json.loads(budget_raw) if budget_raw else {}
+        if backend in budget:
+            budget[backend]["consecutive"] = 0
+            budget[backend]["total"] = budget[backend].get("total", 0) + 1
+            await redis.set("worker:error_budget", json.dumps(budget), ex=7200)
+        else:
+            budget[backend] = {"errors": 0, "total": 1, "consecutive": 0}
+            await redis.set("worker:error_budget", json.dumps(budget), ex=7200)
+    except Exception:
+        pass
 
 
 def _init_backend(backend_key: str):
@@ -265,12 +357,15 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
 
             await broadcast_progress(run_id, {"type": "info", "message": f"✓ {len(test_case_configs)} test configurations ready"})
 
-            # 9. Create callbacks
+            # 9. Create callbacks with activity tracking
+            _result_times: list[float] = []  # Track timestamps for rate calculation
+
             async def on_result_callback(record: TestResultRecord):
                 async with async_session() as result_session:
                     pr = record.pipeline_result
                     er = record.evaluation_result
                     has_error = record.is_error
+                    backend_key = case_backend_map.get(record.test_case_id, "")
 
                     test_result = TestResult(
                         test_run_id=run_uuid,
@@ -299,11 +394,52 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
 
                     await result_session.commit()
 
+                # Track rate
+                now = time.monotonic()
+                _result_times.append(now)
+                # Keep last 60s of timestamps for rate calc
+                cutoff = now - 60
+                while _result_times and _result_times[0] < cutoff:
+                    _result_times.pop(0)
+                cases_per_min = len(_result_times)  # count in last 60s = per min
+
+                # Find the test case config for this result
+                tc_cfg = None
+                for cfg in test_case_configs:
+                    if cfg.id == record.test_case_id:
+                        tc_cfg = cfg
+                        break
+
+                # Publish activity to Redis
+                completed_so_far = len(_result_times) + (test_run.completed_cases if test_run else 0)
+                await publish_activity(run_id, {
+                    "status": "processing",
+                    "current_case": {
+                        "test_case_id": record.test_case_id,
+                        "backend": backend_key,
+                        "pipeline": tc_cfg.pipeline if tc_cfg else "",
+                        "noise_type": tc_cfg.noise_type if tc_cfg else "",
+                        "snr_db": tc_cfg.snr_db if tc_cfg else None,
+                        "original_text": (tc_cfg.original_text[:100] if tc_cfg and tc_cfg.original_text else ""),
+                        "latency_ms": pr.llm_response.latency_ms if pr.llm_response else None,
+                        "passed": er.passed if er else None,
+                        "error": pr.error[:200] if pr.error else None,
+                    },
+                    "cases_per_min": cases_per_min,
+                })
+
+                # Track errors per backend for self-healing
+                if has_error and backend_key:
+                    await publish_error(run_id, pr.error or "Unknown error", backend=backend_key, stage=record.error_stage or "")
+                    await publish_log("error", f"Case failed: {pr.error[:150] if pr.error else 'Unknown'}", backend=backend_key)
+                elif backend_key:
+                    await clear_backend_consecutive(backend_key)
+
                 # Broadcast via WebSocket — include error details
                 ws_msg = {
                     "type": "result",
                     "test_case_id": record.test_case_id,
-                    "backend": case_backend_map.get(record.test_case_id, ""),
+                    "backend": backend_key,
                     "score": er.score if er else None,
                     "passed": er.passed if er else False,
                     "latency_ms": pr.llm_response.latency_ms if pr.llm_response else None,
@@ -341,7 +477,13 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
             )
 
             remaining = len(test_case_configs) - len(completed_hashes)
-            await broadcast_progress(run_id, {"type": "info", "message": f"🚀 Starting execution: {remaining} cases with {max_workers} workers"})
+            await broadcast_progress(run_id, {"type": "info", "message": f"Starting execution: {remaining} cases with {max_workers} workers"})
+            await publish_activity(run_id, {
+                "status": "processing",
+                "cases_per_min": 0,
+                "current_case": {"stage": "starting", "total": remaining, "workers": max_workers},
+            })
+            await publish_log("info", f"Run started: {remaining} cases, {max_workers} workers, backends: {', '.join(sorted(unique_backends))}", run_id=run_id)
 
             await scheduler.run(test_case_configs, completed_ids=completed_hashes)
 
@@ -351,6 +493,8 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
             test_run.completed_at = datetime.utcnow()
             test_run.progress_pct = 100.0
             await session.commit()
+            await publish_activity(run_id, {"status": "idle"})
+            await publish_log("info", f"Run completed: {test_run.completed_cases}/{test_run.total_cases} cases, {test_run.failed_cases} failures", run_id=run_id)
 
             await broadcast_progress(run_id, {
                 "type": "completed",
@@ -379,6 +523,8 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
             except Exception:
                 logger.exception("Failed to update test run status to failed")
 
+            await publish_activity(run_id, {"status": "error", "error": str(e)})
+            await publish_log("error", f"Run FAILED: {type(e).__name__}: {e}", run_id=run_id)
             await broadcast_progress(run_id, {
                 "type": "error",
                 "error": f"{type(e).__name__}: {e}",

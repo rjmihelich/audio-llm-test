@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from .config import settings
-from .api import speech, tests, runs, results, ws
+from .api import speech, tests, runs, results, ws, health
 from .api import settings as settings_router
 
 
@@ -54,8 +54,9 @@ app.include_router(runs.router, prefix="/api/runs", tags=["Runs"])
 app.include_router(results.router, prefix="/api/results", tags=["Results"])
 app.include_router(ws.router, prefix="/api/ws", tags=["WebSocket"])
 app.include_router(settings_router.router, prefix="/api/settings", tags=["Settings"])
+app.include_router(health.router, prefix="/api/health", tags=["Health"])
 
 
-@app.get("/api/health")
-async def health():
+@app.get("/api/ping")
+async def ping():
     return {"status": "ok"}

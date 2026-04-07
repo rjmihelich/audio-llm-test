@@ -17,7 +17,11 @@ import {
 
 const SNR_OPTIONS = [-10, -5, 0, 5, 10, 15, 20, 30];
 const SPEECH_LEVEL_OPTIONS = [-60, -50, -40, -30, -20, -10, 0, 10, 20];
-const NOISE_TYPES = ["white", "pink", "pink_lpf", "babble", "traffic", "silence"];
+const NOISE_SOURCES = [
+  { key: "road_noise", label: "Road Noise", desc: "LPF pink — engine, tires, wind" },
+  { key: "hvac_fan", label: "HVAC Fan", desc: "Blade hum + airflow turbulence" },
+  { key: "secondary_voice", label: "Secondary Voice", desc: "Sporadic competing talker" },
+] as const;
 const PIPELINES = ["direct_audio", "asr_text"];
 
 // Backend definitions with cost / key info
@@ -338,7 +342,7 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [snrValues, setSnrValues] = useState<number[]>([0, 10, 20]);
   const [speechLevels, setSpeechLevels] = useState<number[]>([0]);
-  const [noiseTypes, setNoiseTypes] = useState<string[]>(["pink_lpf"]);
+  const [noiseMix, setNoiseMix] = useState<Record<string, number>>({ road_noise: 1.0 });
   const [delayRange, setDelayRange] = useState<number[]>([0]);
   const [gainRange, setGainRange] = useState<number[]>([-60]);
   const [pipelines, setPipelines] = useState<string[]>(["asr_text"]);
@@ -360,13 +364,18 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
   }));
   const ALL_BACKENDS: BackendDef[] = [...ollamaBackends, ...CLOUD_BACKENDS];
 
+  // Derive active noise types from mixer sliders
+  const activeNoiseTypes = Object.entries(noiseMix)
+    .filter(([, gain]) => gain > 0)
+    .map(([key]) => key);
+
   function buildConfig(): SweepConfigRequest {
     return {
       name,
       description,
       snr_db_values: snrValues,
       speech_level_db_values: speechLevels,
-      noise_types: noiseTypes,
+      noise_types: activeNoiseTypes.length > 0 ? activeNoiseTypes : ["silence"],
       echo: { delay_ms_values: delayRange, gain_db_values: gainRange },
       pipelines,
       llm_backends: backends,
@@ -569,7 +578,7 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
         </div>
       </div>
 
-      {/* Row 3: Audio Degradation — compact horizontal */}
+      {/* Row 3: Audio Degradation — mixer style */}
       <div>
         <div className="flex items-center gap-3 mb-3">
           <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Audio Degradation</h4>
@@ -581,64 +590,139 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
           </button>
         </div>
 
-        <div className="space-y-3">
-          {/* SNR */}
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-gray-500 w-24 shrink-0">SNR (dB)</span>
-            <PillSelect
-              options={SNR_OPTIONS}
-              selected={snrValues}
-              onToggle={(v) => toggleItem(snrValues, v as number, setSnrValues)}
-              format={(v) => `${v}`}
-            />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          {/* Noise Mixer */}
+          <div className="bg-gray-900 rounded-lg p-4 border border-gray-700">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Noise Sources</p>
+              <p className="text-[10px] text-gray-500">{activeNoiseTypes.length} active</p>
+            </div>
+            <div className="space-y-3">
+              {NOISE_SOURCES.map((src) => {
+                const gain = noiseMix[src.key] ?? 0;
+                const active = gain > 0;
+                return (
+                  <div key={src.key} className="group">
+                    <div className="flex items-center gap-3">
+                      {/* On/off toggle */}
+                      <button
+                        onClick={() => {
+                          setNoiseMix((prev) => ({
+                            ...prev,
+                            [src.key]: active ? 0 : 1.0,
+                          }));
+                        }}
+                        className={`w-8 h-4 rounded-full transition-colors relative flex-shrink-0 ${
+                          active ? "bg-green-500" : "bg-gray-600"
+                        }`}
+                      >
+                        <span
+                          className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${
+                            active ? "translate-x-4" : "translate-x-0.5"
+                          }`}
+                        />
+                      </button>
+
+                      {/* Label */}
+                      <div className="flex-1 min-w-0">
+                        <p className={`text-xs font-medium ${active ? "text-white" : "text-gray-500"}`}>
+                          {src.label}
+                        </p>
+                        <p className="text-[10px] text-gray-600 truncate">{src.desc}</p>
+                      </div>
+
+                      {/* Gain slider */}
+                      <div className="flex items-center gap-2 w-36">
+                        <input
+                          type="range"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={gain}
+                          onChange={(e) =>
+                            setNoiseMix((prev) => ({
+                              ...prev,
+                              [src.key]: parseFloat(e.target.value),
+                            }))
+                          }
+                          className="flex-1 h-1 accent-green-500 bg-gray-700 rounded-full appearance-none cursor-pointer disabled:opacity-30"
+                          disabled={!active}
+                        />
+                        <span className={`text-[10px] font-mono w-8 text-right ${active ? "text-green-400" : "text-gray-600"}`}>
+                          {active ? `${Math.round(gain * 100)}%` : "OFF"}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Level meter visual (decorative) */}
+                    {active && (
+                      <div className="ml-11 mt-1 h-1 rounded-full overflow-hidden bg-gray-800">
+                        <div
+                          className="h-full rounded-full transition-all duration-300"
+                          style={{
+                            width: `${gain * 100}%`,
+                            background: gain > 0.8
+                              ? "linear-gradient(to right, #22c55e, #eab308, #ef4444)"
+                              : gain > 0.5
+                              ? "linear-gradient(to right, #22c55e, #eab308)"
+                              : "#22c55e",
+                          }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
-          {/* Noise */}
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-gray-500 w-24 shrink-0">Noise</span>
-            <PillSelect
-              options={NOISE_TYPES}
-              selected={noiseTypes}
-              onToggle={(v) => toggleItem(noiseTypes, v as string, setNoiseTypes)}
-              format={(v) => String(v).replace("_", " ")}
-            />
-          </div>
+          {/* SNR + Advanced */}
+          <div className="space-y-3">
+            {/* SNR */}
+            <div>
+              <span className="text-xs text-gray-500 block mb-1.5">SNR (dB)</span>
+              <PillSelect
+                options={SNR_OPTIONS}
+                selected={snrValues}
+                onToggle={(v) => toggleItem(snrValues, v as number, setSnrValues)}
+                format={(v) => `${v}`}
+              />
+            </div>
 
-          {/* Advanced: Speech Level, Echo */}
-          {showAdvanced && (
-            <>
-              <div className="flex items-start gap-3">
-                <span className="text-xs text-gray-500 w-24 shrink-0 pt-1">Speech Level</span>
+            {/* Advanced: Speech Level, Echo */}
+            {showAdvanced && (
+              <>
                 <div>
+                  <span className="text-xs text-gray-500 block mb-1.5">Speech Level (dB)</span>
                   <PillSelect
                     options={SPEECH_LEVEL_OPTIONS}
                     selected={speechLevels}
                     onToggle={(v) => toggleItem(speechLevels, v as number, setSpeechLevels)}
-                    format={(v) => `${Number(v) > 0 ? "+" : ""}${v} dB`}
+                    format={(v) => `${Number(v) > 0 ? "+" : ""}${v}`}
                   />
                   <p className="text-[10px] text-gray-400 mt-1">0 = original, negative = whisper, positive = loud/clip</p>
                 </div>
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-gray-500 w-24 shrink-0">Echo Delay</span>
-                <PillSelect
-                  options={[0, 25, 50, 100, 150, 200, 300]}
-                  selected={delayRange}
-                  onToggle={(v) => toggleItem(delayRange, v as number, setDelayRange)}
-                  format={(v) => `${v}ms`}
-                />
-              </div>
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-gray-500 w-24 shrink-0">Echo Gain</span>
-                <PillSelect
-                  options={[-60, -40, -20, -10, -6, -3]}
-                  selected={gainRange}
-                  onToggle={(v) => toggleItem(gainRange, v as number, setGainRange)}
-                  format={(v) => `${v} dB`}
-                />
-              </div>
-            </>
-          )}
+                <div>
+                  <span className="text-xs text-gray-500 block mb-1.5">Echo Delay</span>
+                  <PillSelect
+                    options={[0, 25, 50, 100, 150, 200, 300]}
+                    selected={delayRange}
+                    onToggle={(v) => toggleItem(delayRange, v as number, setDelayRange)}
+                    format={(v) => `${v}ms`}
+                  />
+                </div>
+                <div>
+                  <span className="text-xs text-gray-500 block mb-1.5">Echo Gain</span>
+                  <PillSelect
+                    options={[-60, -40, -20, -10, -6, -3]}
+                    selected={gainRange}
+                    onToggle={(v) => toggleItem(gainRange, v as number, setGainRange)}
+                    format={(v) => `${v} dB`}
+                  />
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
 

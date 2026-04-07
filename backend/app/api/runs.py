@@ -25,6 +25,7 @@ class LaunchRunRequest(BaseModel):
 class RunResponse(BaseModel):
     id: str
     test_suite_id: str
+    suite_name: str | None = None
     status: str  # pending, running, completed, cancelled, failed
     total_cases: int
     completed_cases: int
@@ -33,14 +34,20 @@ class RunResponse(BaseModel):
     progress_pct: float
     started_at: str | None = None
     completed_at: str | None = None
+    updated_at: str | None = None
+    created_at: str | None = None
     error_message: str | None = None
     error_details: dict | None = None
 
 
 def _run_to_response(run: TestRun) -> RunResponse:
+    suite_name = None
+    if hasattr(run, "test_suite") and run.test_suite:
+        suite_name = run.test_suite.name
     return RunResponse(
         id=str(run.id),
         test_suite_id=str(run.test_suite_id),
+        suite_name=suite_name,
         status=run.status,
         total_cases=run.total_cases,
         completed_cases=run.completed_cases,
@@ -49,6 +56,8 @@ def _run_to_response(run: TestRun) -> RunResponse:
         progress_pct=run.progress_pct,
         started_at=run.started_at.isoformat() if run.started_at else None,
         completed_at=run.completed_at.isoformat() if run.completed_at else None,
+        updated_at=run.updated_at.isoformat() if run.updated_at else None,
+        created_at=run.created_at.isoformat() if run.created_at else None,
         error_message=getattr(run, "error_message", None),
         error_details=getattr(run, "error_details", None),
     )

@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 
 from ..audio.types import AudioBuffer
-from ..audio.noise import pink_noise_filtered, white_noise, noise_from_file
+from ..audio.noise import generate_noise
 from ..audio.mixer import mix_at_snr
 from ..audio.echo import EchoConfig, EchoPath
 from ..llm.base import LLMBackend, ASRBackend
@@ -75,19 +75,11 @@ class EchoFeedbackPipeline:
         return "echo_feedback"
 
     def _generate_noise(self, duration_s: float, num_samples: int) -> AudioBuffer:
-        if self._noise_type == "pink_lpf":
-            return pink_noise_filtered(
-                duration_s, lpf_cutoff_hz=100.0, lpf_order=2,
-                sample_rate=self._sample_rate, seed=self._noise_seed,
-            )
-        elif self._noise_type == "white":
-            return white_noise(duration_s, self._sample_rate, seed=self._noise_seed)
-        elif self._noise_type == "file" and self._noise_file:
-            return noise_from_file(self._noise_file, num_samples, self._sample_rate)
-        else:
-            return pink_noise_filtered(
-                duration_s, sample_rate=self._sample_rate, seed=self._noise_seed,
-            )
+        return generate_noise(
+            self._noise_type, duration_s, num_samples,
+            sample_rate=self._sample_rate, seed=self._noise_seed,
+            noise_file=self._noise_file,
+        )
 
     async def execute(self, input: PipelineInput) -> PipelineResult:
         """Execute single turn (for compatibility with Pipeline interface).

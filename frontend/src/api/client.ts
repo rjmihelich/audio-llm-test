@@ -39,6 +39,7 @@ export interface SweepPreview {
 export interface RunResponse {
   id: string;
   test_suite_id: string;
+  suite_name: string | null;
   status: string;
   total_cases: number;
   completed_cases: number;
@@ -47,6 +48,8 @@ export interface RunResponse {
   progress_pct: number;
   started_at: string | null;
   completed_at: string | null;
+  updated_at: string | null;
+  created_at: string | null;
   error_message: string | null;
   error_details: Record<string, unknown> | null;
 }
@@ -92,6 +95,7 @@ export interface ResultResponse {
   total_latency_ms: number | null;
   error: string | null;
   error_stage: string | null;
+  created_at: string | null;
 }
 
 export interface SweepConfigRequest {
@@ -537,6 +541,55 @@ export function fetchInsights(backend = "auto"): Promise<InsightsResponse> {
 
 export function fetchDashboard(): Promise<DashboardResponse> {
   return request("/results/dashboard/aggregate");
+}
+
+// ---------------------------------------------------------------------------
+// System Health
+// ---------------------------------------------------------------------------
+
+export interface SystemMetrics {
+  cpu_percent: number;
+  cpu_count: number;
+  ram_total_gb: number;
+  ram_used_gb: number;
+  ram_percent: number;
+  gpu: Array<{
+    name: string;
+    util_percent: number | null;
+    mem_used_gb: number | null;
+    mem_total_gb: number | null;
+    mem_percent: number | null;
+    temperature_c: number | null;
+  }> | null;
+  disk_percent: number | null;
+  uptime_s: number | null;
+  hostname: string | null;
+  platform: string | null;
+}
+
+export interface WorkerActivity {
+  run_id: string | null;
+  status: string;
+  current_case: Record<string, unknown> | null;
+  cases_per_min: number;
+  last_heartbeat: string | null;
+  recent_errors: Array<Record<string, unknown>> | null;
+  error_budget: Record<string, { errors: number; total: number; consecutive: number }> | null;
+  worker_log: Array<{ level: string; message: string; timestamp: string }> | null;
+}
+
+export interface HealthResponse {
+  system: SystemMetrics;
+  worker: WorkerActivity;
+  timestamp: string;
+}
+
+export function fetchSystemHealth(): Promise<HealthResponse> {
+  return request("/health/system");
+}
+
+export function getAudioUrl(runId: string, caseId: string, type: "clean" | "degraded" | "echo" = "degraded"): string {
+  return `/api/results/${runId}/cases/${caseId}/audio?type=${type}`;
 }
 
 // ---------------------------------------------------------------------------

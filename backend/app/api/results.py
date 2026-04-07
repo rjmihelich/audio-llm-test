@@ -56,6 +56,7 @@ class ResultResponse(BaseModel):
     voice_language: str | None = None
     corpus_category: str | None = None
     corpus_language: str | None = None
+    created_at: str | None = None
 
 
 class StatsResponse(BaseModel):
@@ -192,6 +193,7 @@ async def query_results(
             voice_language=voice.language if voice else None,
             corpus_category=ce.category if ce else None,
             corpus_language=ce.language if ce else None,
+            created_at=tr.created_at.isoformat() if tr.created_at else None,
         )
         for tr, tc, ce, voice in rows
     ]
