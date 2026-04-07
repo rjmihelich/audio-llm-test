@@ -460,9 +460,18 @@ class TestScheduler:
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
         records = []
-        for r in results:
+        for i, r in enumerate(results):
             if isinstance(r, Exception):
-                logger.error(f"Task failed with exception: {r}")
+                # Task threw an unhandled exception — create error record
+                logger.error(f"Task failed with exception: {r}", exc_info=r)
+                case = pending[i]
+                error_record = self._make_error_record(
+                    case,
+                    f"Unhandled exception: {type(r).__name__}: {r}",
+                    "pipeline",
+                )
+                await self._emit_result(error_record)
+                records.append(error_record)
             elif r is not None:
                 records.append(r)
 

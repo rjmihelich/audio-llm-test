@@ -491,7 +491,26 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
             await session.refresh(test_run)
             test_run.status = "completed"
             test_run.completed_at = datetime.utcnow()
-            test_run.progress_pct = 100.0
+            test_run.progress_pct = (
+                (test_run.completed_cases / test_run.total_cases * 100.0)
+                if test_run.total_cases > 0 else 0.0
+            )
+
+            # Log warning if not all cases completed
+            if test_run.completed_cases < test_run.total_cases:
+                missing = test_run.total_cases - test_run.completed_cases
+                logger.warning(
+                    f"Run {run_id} completed with {missing} missing cases "
+                    f"({test_run.completed_cases}/{test_run.total_cases})"
+                )
+                await publish_log(
+                    "warn",
+                    f"Run finished with {missing} cases unaccounted for "
+                    f"({test_run.completed_cases}/{test_run.total_cases} completed, "
+                    f"{test_run.failed_cases} failed)",
+                    run_id=run_id,
+                )
+
             await session.commit()
             await publish_activity(run_id, {"status": "idle"})
             await publish_log("info", f"Run completed: {test_run.completed_cases}/{test_run.total_cases} cases, {test_run.failed_cases} failures", run_id=run_id)
