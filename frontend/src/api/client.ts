@@ -500,6 +500,28 @@ export interface DashboardResponse {
   latency_by_backend: Array<Record<string, unknown>> | null;
   parameter_effects: Record<string, unknown> | null;
   run_history: Array<Record<string, unknown>> | null;
+  accuracy_by_voice_provider?: Array<Record<string, unknown>>;
+  accuracy_by_corpus_category?: Array<Record<string, unknown>>;
+  accuracy_by_voice_gender?: Array<Record<string, unknown>>;
+}
+
+export interface AnalyticsFilters {
+  llm_backend?: string;
+  pipeline?: string;
+  noise_type?: string;
+  voice_provider?: string;
+  corpus_category?: string;
+  voice_gender?: string;
+}
+
+export interface InsightsResponse {
+  analysis: string;
+  stats_summary: Record<string, unknown>;
+  generated_at: string;
+}
+
+export function fetchInsights(): Promise<InsightsResponse> {
+  return request("/results/dashboard/insights", { method: "POST" });
 }
 
 export function fetchDashboard(): Promise<DashboardResponse> {

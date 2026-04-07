@@ -1,3 +1,4 @@
+import { useState, useCallback } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import {
@@ -5,7 +6,7 @@ import {
   BarChart, Bar, ResponsiveContainer, Cell,
   AreaChart, Area,
 } from "recharts";
-import { listRuns, fetchDashboard, type DashboardResponse } from "../api/client";
+import { listRuns, fetchDashboard, fetchInsights, type DashboardResponse, type InsightsResponse } from "../api/client";
 import StatsCard from "../components/StatsCard";
 
 const COLORS = ["#3b82f6", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899"];
@@ -331,6 +332,139 @@ function RunHistory({ data }: { data: Array<Record<string, unknown>> }) {
   );
 }
 
+// -- Voice Provider comparison bar chart --
+function VoiceProviderComparison({ data }: { data: Array<Record<string, unknown>> }) {
+  const chartData = data.map((d) => ({
+    provider: String(d.group),
+    passRate: Math.round(Number(d.pass_rate) * 100),
+    meanScore: Math.round(Number(d.mean_score) * 100),
+    count: Number(d.count),
+  }));
+
+  return (
+    <ChartCard title="Voice Provider Comparison" subtitle="Pass rate across voice providers (natural vs synthetic)">
+      <ResponsiveContainer width="100%" height={280}>
+        <BarChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis dataKey="provider" tick={{ fontSize: 11 }} />
+          <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} tick={{ fontSize: 12 }} />
+          <Tooltip formatter={(val: number, name: string) => [`${val}%`, name]} />
+          <Legend verticalAlign="top" height={36} />
+          <Bar dataKey="passRate" name="Pass Rate" radius={[4, 4, 0, 0]}>
+            {chartData.map((_, i) => (
+              <Cell key={i} fill={COLORS[i % COLORS.length]} />
+            ))}
+          </Bar>
+          <Bar dataKey="meanScore" name="Mean Score" fill="#94a3b8" radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </ChartCard>
+  );
+}
+
+// -- Corpus Category breakdown bar chart --
+function CorpusCategoryChart({ data }: { data: Array<Record<string, unknown>> }) {
+  const chartData = data.map((d) => ({
+    category: String(d.group),
+    passRate: Math.round(Number(d.pass_rate) * 100),
+    meanScore: Math.round(Number(d.mean_score) * 100),
+    count: Number(d.count),
+  }));
+
+  return (
+    <ChartCard title="Performance by Corpus Category" subtitle="Pass rate across corpus categories">
+      <ResponsiveContainer width="100%" height={280}>
+        <BarChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis dataKey="category" tick={{ fontSize: 11 }} />
+          <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} tick={{ fontSize: 12 }} />
+          <Tooltip formatter={(val: number, name: string) => [`${val}%`, name]} />
+          <Legend verticalAlign="top" height={36} />
+          <Bar dataKey="passRate" name="Pass Rate" radius={[4, 4, 0, 0]}>
+            {chartData.map((_, i) => (
+              <Cell key={i} fill={COLORS[i % COLORS.length]} />
+            ))}
+          </Bar>
+          <Bar dataKey="meanScore" name="Mean Score" fill="#94a3b8" radius={[4, 4, 0, 0]} />
+        </BarChart>
+      </ResponsiveContainer>
+    </ChartCard>
+  );
+}
+
+// -- AI Insights Panel --
+function AIInsightsPanel() {
+  const [insights, setInsights] = useState<InsightsResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleGenerate = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await fetchInsights();
+      setInsights(result);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate insights");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+      <div className="px-5 pt-5 pb-3 flex items-center justify-between">
+        <div>
+          <h3 className="text-sm font-semibold text-gray-700">AI Performance Analysis</h3>
+          <p className="text-xs text-gray-400 mt-0.5">
+            Generate AI-powered insights from your test results
+          </p>
+        </div>
+        <button
+          onClick={handleGenerate}
+          disabled={loading}
+          className="px-4 py-2 bg-slate-800 text-white text-sm font-medium rounded-lg hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+        >
+          {loading && (
+            <svg className="animate-spin h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+            </svg>
+          )}
+          {loading ? "Generating..." : insights ? "Regenerate Insights" : "Generate Insights"}
+        </button>
+      </div>
+      <div className="px-5 pb-5">
+        {error && (
+          <div className="mt-2 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+            {error}
+          </div>
+        )}
+        {insights && (
+          <div className="mt-2">
+            <div className="p-4 bg-gray-50 border border-gray-200 rounded-lg">
+              <div
+                className="text-sm text-gray-800 leading-relaxed"
+                style={{ whiteSpace: "pre-wrap" }}
+              >
+                {insights.analysis}
+              </div>
+            </div>
+            <p className="text-[10px] text-gray-400 mt-2 text-right">
+              Generated at {new Date(insights.generated_at).toLocaleString()}
+            </p>
+          </div>
+        )}
+        {!insights && !error && !loading && (
+          <p className="text-xs text-gray-400 mt-2">
+            Click the button above to generate an AI analysis of your test results.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ============================================================================
 // Main Dashboard
 // ============================================================================
@@ -415,6 +549,9 @@ export default function Dashboard() {
         />
       </div>
 
+      {/* AI Insights Panel */}
+      {hasData && <AIInsightsPanel />}
+
       {!hasData ? (
         <EmptyState />
       ) : (
@@ -488,7 +625,30 @@ export default function Dashboard() {
             )}
           </div>
 
-          {/* Row 4: Run history */}
+          {/* Row 4: Voice provider + Corpus category */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+            {d.accuracy_by_voice_provider && d.accuracy_by_voice_provider.length > 0 ? (
+              <VoiceProviderComparison data={d.accuracy_by_voice_provider} />
+            ) : (
+              <ChartCard title="Voice Provider Comparison" subtitle="Run tests with multiple voice providers to see this chart">
+                <div className="h-64 flex items-center justify-center text-gray-300 text-sm">
+                  Need multiple voice providers in sweep
+                </div>
+              </ChartCard>
+            )}
+
+            {d.accuracy_by_corpus_category && d.accuracy_by_corpus_category.length > 0 ? (
+              <CorpusCategoryChart data={d.accuracy_by_corpus_category} />
+            ) : (
+              <ChartCard title="Performance by Corpus Category" subtitle="Run tests with multiple corpus categories to see this chart">
+                <div className="h-64 flex items-center justify-center text-gray-300 text-sm">
+                  Need multiple corpus categories in sweep
+                </div>
+              </ChartCard>
+            )}
+          </div>
+
+          {/* Row 5: Run history */}
           {d.run_history && d.run_history.length > 1 && (
             <div className="grid grid-cols-1 gap-4">
               <RunHistory data={d.run_history} />

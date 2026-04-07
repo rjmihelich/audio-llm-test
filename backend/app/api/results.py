@@ -4,19 +4,21 @@ from __future__ import annotations
 
 import io
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+import httpx
 import pandas as pd
 
 from backend.app.config import settings
 from backend.app.models.base import get_session
 from backend.app.models.run import TestResult, TestRun
 from backend.app.models.test import TestCase
-from backend.app.models.speech import SpeechSample, CorpusEntry
+from backend.app.models.speech import SpeechSample, CorpusEntry, Voice
 from backend.app.stats.analysis import (
     accuracy_by_group,
     pairwise_backend_comparison,
@@ -48,6 +50,12 @@ class ResultResponse(BaseModel):
     total_latency_ms: float | None = None
     error: str | None = None
     error_stage: str | None = None
+    voice_provider: str | None = None
+    voice_gender: str | None = None
+    voice_accent: str | None = None
+    voice_language: str | None = None
+    corpus_category: str | None = None
+    corpus_language: str | None = None
 
 
 class StatsResponse(BaseModel):
@@ -76,17 +84,18 @@ async def _load_results_for_run(
 ) -> list[dict]:
     """Load all results for a run joined with test case params, returned as dicts."""
     stmt = (
-        select(TestResult, TestCase, CorpusEntry)
+        select(TestResult, TestCase, CorpusEntry, Voice)
         .join(TestCase, TestResult.test_case_id == TestCase.id)
         .outerjoin(SpeechSample, TestCase.speech_sample_id == SpeechSample.id)
         .outerjoin(CorpusEntry, SpeechSample.corpus_entry_id == CorpusEntry.id)
+        .outerjoin(Voice, SpeechSample.voice_id == Voice.id)
         .where(TestResult.test_run_id == run_id)
     )
     result = await session.execute(stmt)
     rows = result.all()
 
     records = []
-    for tr, tc, ce in rows:
+    for tr, tc, ce, voice in rows:
         records.append({
             "test_case_id": str(tc.id),
             "pipeline_type": tc.pipeline,
@@ -107,6 +116,12 @@ async def _load_results_for_run(
             "total_latency_ms": tr.llm_latency_ms,
             "error": getattr(tr, "error", None) or ((tr.evaluation_details_json or {}).get("error") if tr.evaluation_details_json else None),
             "error_stage": getattr(tr, "error_stage", None),
+            "voice_provider": voice.provider if voice else None,
+            "voice_gender": voice.gender if voice else None,
+            "voice_accent": voice.accent if voice else None,
+            "voice_language": voice.language if voice else None,
+            "corpus_category": ce.category if ce else None,
+            "corpus_language": ce.language if ce else None,
         })
     return records
 
@@ -125,10 +140,11 @@ async def query_results(
 ):
     """Query test results with filtering and pagination."""
     stmt = (
-        select(TestResult, TestCase, CorpusEntry)
+        select(TestResult, TestCase, CorpusEntry, Voice)
         .join(TestCase, TestResult.test_case_id == TestCase.id)
         .outerjoin(SpeechSample, TestCase.speech_sample_id == SpeechSample.id)
         .outerjoin(CorpusEntry, SpeechSample.corpus_entry_id == CorpusEntry.id)
+        .outerjoin(Voice, SpeechSample.voice_id == Voice.id)
     )
 
     if run_id is not None:
@@ -170,8 +186,14 @@ async def query_results(
             total_latency_ms=tr.llm_latency_ms,
             error=getattr(tr, "error", None) or ((tr.evaluation_details_json or {}).get("error") if tr.evaluation_details_json else None),
             error_stage=getattr(tr, "error_stage", None),
+            voice_provider=voice.provider if voice else None,
+            voice_gender=voice.gender if voice else None,
+            voice_accent=voice.accent if voice else None,
+            voice_language=voice.language if voice else None,
+            corpus_category=ce.category if ce else None,
+            corpus_language=ce.language if ce else None,
         )
-        for tr, tc, ce in rows
+        for tr, tc, ce, voice in rows
     ]
 
 
@@ -191,6 +213,9 @@ class DashboardResponse(BaseModel):
     latency_by_backend: list[dict] | None = None
     parameter_effects: dict | None = None
     run_history: list[dict] | None = None
+    accuracy_by_voice_provider: list[dict] | None = None
+    accuracy_by_corpus_category: list[dict] | None = None
+    accuracy_by_voice_gender: list[dict] | None = None
 
 
 @router.get("/dashboard/aggregate", response_model=DashboardResponse)
@@ -246,6 +271,15 @@ async def get_dashboard_aggregate(
 
     # Accuracy by backend
     backend_acc = accuracy_by_group(df, "llm_backend") if "llm_backend" in df.columns and df["llm_backend"].nunique() > 1 else pd.DataFrame()
+
+    # Accuracy by voice provider
+    voice_provider_acc = accuracy_by_group(df, "voice_provider") if "voice_provider" in df.columns and df["voice_provider"].notna().any() and df["voice_provider"].nunique() > 1 else pd.DataFrame()
+
+    # Accuracy by corpus category
+    corpus_category_acc = accuracy_by_group(df, "corpus_category") if "corpus_category" in df.columns and df["corpus_category"].notna().any() and df["corpus_category"].nunique() > 1 else pd.DataFrame()
+
+    # Accuracy by voice gender
+    voice_gender_acc = accuracy_by_group(df, "voice_gender") if "voice_gender" in df.columns and df["voice_gender"].notna().any() and df["voice_gender"].nunique() > 1 else pd.DataFrame()
 
     # Echo heatmap (delay_ms vs gain_db)
     echo_heatmap = None
@@ -321,6 +355,9 @@ async def get_dashboard_aggregate(
         latency_by_backend=latency_data,
         parameter_effects=param_effects,
         run_history=run_history if run_history else None,
+        accuracy_by_voice_provider=voice_provider_acc.to_dict("records") if not voice_provider_acc.empty else None,
+        accuracy_by_corpus_category=corpus_category_acc.to_dict("records") if not corpus_category_acc.empty else None,
+        accuracy_by_voice_gender=voice_gender_acc.to_dict("records") if not voice_gender_acc.empty else None,
     )
 
 
@@ -534,4 +571,188 @@ async def get_test_case_audio(
         path=str(file_path),
         media_type="audio/wav",
         filename=f"{case_id}_{type}.wav",
+    )
+
+
+# ---------------------------------------------------------------------------
+# LLM Insights endpoint
+# ---------------------------------------------------------------------------
+
+
+class InsightsResponse(BaseModel):
+    analysis: str
+    stats_summary: dict
+    generated_at: str
+
+
+def _build_stats_summary(df: pd.DataFrame) -> dict:
+    """Build a comprehensive statistics summary dict from a results DataFrame."""
+    summary: dict = {}
+
+    # Overall
+    total = len(df)
+    if total == 0:
+        return {"total_tests": 0}
+
+    summary["total_tests"] = total
+    if "eval_passed" in df.columns:
+        summary["overall_pass_rate"] = round(float(df["eval_passed"].mean()), 4)
+    if "eval_score" in df.columns:
+        summary["overall_mean_score"] = round(float(df["eval_score"].mean()), 4)
+    if "total_latency_ms" in df.columns and df["total_latency_ms"].notna().any():
+        summary["mean_latency_ms"] = round(float(df["total_latency_ms"].mean()), 2)
+
+    def _group_pass_rate(col: str) -> dict | None:
+        if col not in df.columns or df[col].isna().all():
+            return None
+        grouped = df.groupby(col)["eval_passed"].agg(["mean", "count"]).reset_index()
+        grouped.columns = [col, "pass_rate", "count"]
+        grouped["pass_rate"] = grouped["pass_rate"].round(4)
+        return {str(row[col]): {"pass_rate": row["pass_rate"], "count": int(row["count"])} for _, row in grouped.iterrows()}
+
+    # By SNR
+    by_snr = _group_pass_rate("snr_db")
+    if by_snr:
+        summary["by_snr"] = by_snr
+
+    # By noise type
+    by_noise = _group_pass_rate("noise_type")
+    if by_noise:
+        summary["by_noise_type"] = by_noise
+
+    # By LLM backend
+    by_backend = _group_pass_rate("llm_backend")
+    if by_backend:
+        summary["by_llm_backend"] = by_backend
+
+    # By voice provider
+    by_voice_provider = _group_pass_rate("voice_provider")
+    if by_voice_provider:
+        summary["by_voice_provider"] = by_voice_provider
+
+    # By corpus category
+    by_corpus = _group_pass_rate("corpus_category")
+    if by_corpus:
+        summary["by_corpus_category"] = by_corpus
+
+    # By pipeline type
+    by_pipeline = _group_pass_rate("pipeline_type")
+    if by_pipeline:
+        summary["by_pipeline_type"] = by_pipeline
+
+    # By voice gender
+    by_gender = _group_pass_rate("voice_gender")
+    if by_gender:
+        summary["by_voice_gender"] = by_gender
+
+    return summary
+
+
+def _format_stats_for_prompt(stats_summary: dict) -> str:
+    """Format the stats summary dict into a human-readable string for the LLM prompt."""
+    lines: list[str] = []
+    lines.append(f"Total test cases: {stats_summary.get('total_tests', 'N/A')}")
+    if "overall_pass_rate" in stats_summary:
+        lines.append(f"Overall pass rate: {stats_summary['overall_pass_rate'] * 100:.1f}%")
+    if "overall_mean_score" in stats_summary:
+        lines.append(f"Overall mean evaluation score: {stats_summary['overall_mean_score']:.4f}")
+    if "mean_latency_ms" in stats_summary:
+        lines.append(f"Mean latency: {stats_summary['mean_latency_ms']:.1f} ms")
+
+    def _format_group(label: str, key: str) -> None:
+        data = stats_summary.get(key)
+        if not data:
+            return
+        lines.append(f"\n{label}:")
+        for group_val, metrics in data.items():
+            lines.append(f"  {group_val}: pass_rate={metrics['pass_rate'] * 100:.1f}%, n={metrics['count']}")
+
+    _format_group("Pass rate by SNR (dB)", "by_snr")
+    _format_group("Pass rate by noise type", "by_noise_type")
+    _format_group("Pass rate by LLM backend", "by_llm_backend")
+    _format_group("Pass rate by voice provider (natural=slurp, synthetic=TTS engines)", "by_voice_provider")
+    _format_group("Pass rate by corpus category", "by_corpus_category")
+    _format_group("Pass rate by pipeline type", "by_pipeline_type")
+    _format_group("Pass rate by voice gender", "by_voice_gender")
+
+    return "\n".join(lines)
+
+
+@router.post("/dashboard/insights", response_model=InsightsResponse)
+async def generate_insights(
+    session: AsyncSession = Depends(get_session),
+):
+    """Generate LLM-powered insights from all completed test run results."""
+    # Find all completed runs
+    run_stmt = select(TestRun).where(TestRun.status == "completed")
+    run_result = await session.execute(run_stmt)
+    completed_runs = run_result.scalars().all()
+
+    if not completed_runs:
+        raise HTTPException(404, "No completed test runs found")
+
+    # Load results from all completed runs
+    all_records: list[dict] = []
+    for run in completed_runs:
+        records = await _load_results_for_run(session, run.id)
+        all_records.extend(records)
+
+    if not all_records:
+        raise HTTPException(404, "No test results found in completed runs")
+
+    df = pd.DataFrame(all_records)
+
+    # Build comprehensive stats summary
+    stats_summary = _build_stats_summary(df)
+
+    # Format stats for the LLM prompt
+    stats_text = _format_stats_for_prompt(stats_summary)
+
+    prompt_text = (
+        "You are a data scientist analyzing speech recognition test results. "
+        "Here are the aggregated metrics from our Audio LLM quality evaluation platform:\n\n"
+        f"{stats_text}\n\n"
+        "Please analyze this data and provide:\n"
+        "1. **Key Findings**: Top 3-5 most important patterns or insights\n"
+        "2. **Performance Comparison**: How do different LLM backends compare? Natural vs synthetic speech?\n"
+        "3. **Degradation Analysis**: How does noise, SNR, echo affect accuracy?\n"
+        "4. **Recommendations**: What should be tested next? What configurations should be avoided?\n"
+        "5. **Summary**: A brief executive summary paragraph\n\n"
+        "Be specific with numbers and percentages. Focus on actionable insights."
+    )
+
+    # Call Ollama for LLM analysis
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(
+                f"{settings.ollama_base_url}/api/generate",
+                json={
+                    "model": "mistral",
+                    "prompt": prompt_text,
+                    "stream": False,
+                },
+            )
+            resp.raise_for_status()
+            analysis = resp.json().get("response", "")
+    except httpx.ConnectError:
+        raise HTTPException(
+            503,
+            "Could not connect to Ollama. Ensure Ollama is running at "
+            f"{settings.ollama_base_url}",
+        )
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(
+            502,
+            f"Ollama returned an error: {exc.response.status_code} - {exc.response.text}",
+        )
+    except httpx.TimeoutException:
+        raise HTTPException(
+            504,
+            "Ollama request timed out. The model may be loading or the analysis too large.",
+        )
+
+    return InsightsResponse(
+        analysis=analysis,
+        stats_summary=stats_summary,
+        generated_at=datetime.now(timezone.utc).isoformat(),
     )
