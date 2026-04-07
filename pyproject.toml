@@ -52,6 +52,9 @@ dev = [
 whisper = [
     "openai-whisper>=20231117",
 ]
+whisper-local = [
+    "faster-whisper>=1.0",
+]
 tts-free = [
     "edge-tts>=6.1",
     "gTTS>=2.5",

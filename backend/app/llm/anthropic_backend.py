@@ -16,7 +16,7 @@ class AnthropicBackend:
     def __init__(
         self,
         api_key: str,
-        model: str = "claude-sonnet-4-20250514",
+        model: str = "claude-haiku-4-5-20251001",
         rate_limit: RateLimitConfig | None = None,
     ):
         self._client = anthropic.AsyncAnthropic(api_key=api_key)

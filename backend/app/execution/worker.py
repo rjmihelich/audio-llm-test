@@ -21,12 +21,19 @@ from ..llm.openai_audio import OpenAIAudioBackend
 from ..llm.gemini import GeminiBackend
 from ..llm.anthropic_backend import AnthropicBackend
 from ..llm.ollama import OllamaBackend
-from ..llm.whisper import WhisperAPIBackend
+from ..llm.whisper import WhisperAPIBackend, WhisperLocalBackend
+from ..llm.deepgram_stt import DeepgramSTTBackend
 from ..evaluation.command_match import CommandMatchEvaluator
 from ..evaluation.llm_judge import LLMJudgeEvaluator
 from ..speech.tts_openai import OpenAITTSProvider
-from ..speech.tts_google import GoogleTTSProvider
-from ..speech.tts_elevenlabs import ElevenLabsTTSProvider
+try:
+    from ..speech.tts_google import GoogleTTSProvider
+except ImportError:
+    GoogleTTSProvider = None  # type: ignore
+try:
+    from ..speech.tts_elevenlabs import ElevenLabsTTSProvider
+except ImportError:
+    ElevenLabsTTSProvider = None  # type: ignore
 from ..audio.io import save_audio
 from ..api.ws import broadcast_progress
 
@@ -111,7 +118,7 @@ async def run_test_suite(ctx: dict, run_id: str):
 
             # 4. Update TestRun status to running
             test_run.status = "running"
-            test_run.started_at = datetime.now(timezone.utc)
+            test_run.started_at = datetime.utcnow()
             test_run.total_cases = len(test_cases)
             await session.commit()
 
@@ -140,10 +147,20 @@ async def run_test_suite(ctx: dict, run_id: str):
             if judge_backend:
                 evaluators["llm_judge"] = LLMJudgeEvaluator(judge_backend=judge_backend)
 
-            # 7. Initialize Whisper ASR if any test case uses asr_text pipeline
+            # 7. Initialize ASR backend if any test case uses asr_text pipeline
             asr_backend = None
             if any(tc.pipeline == "asr_text" for tc in test_cases):
-                asr_backend = WhisperAPIBackend(api_key=settings.openai_api_key)
+                if settings.default_stt_backend.startswith("deepgram") and settings.deepgram_api_key:
+                    asr_backend = DeepgramSTTBackend(api_key=settings.deepgram_api_key)
+                elif settings.openai_api_key and not settings.openai_api_key.startswith("sk-..."):
+                    asr_backend = WhisperAPIBackend(api_key=settings.openai_api_key)
+                else:
+                    # Fall back to local Whisper (free, no API key needed)
+                    logger.info("No valid STT API key found — using local Whisper")
+                    asr_backend = WhisperLocalBackend(model_size="base")
+                    # Pre-load the model to avoid concurrent loading issues
+                    asr_backend._ensure_model()
+                    logger.info("Whisper model loaded successfully")
 
             # 8. Convert TestCase DB objects to TestCaseConfig
             test_case_configs: list[TestCaseConfig] = []
@@ -214,11 +231,20 @@ async def run_test_suite(ctx: dict, run_id: str):
                 }))
 
             # 10. Create and run scheduler
+            # Use lower concurrency when running local inference
+            has_local_backend = any(
+                k.startswith("ollama") for k in backends
+            )
+            max_workers = min(
+                settings.max_concurrent_workers,
+                2 if has_local_backend else settings.max_concurrent_workers,
+            )
+
             scheduler = TestScheduler(
                 backends=backends,
                 asr_backend=asr_backend,
                 evaluators=evaluators,
-                max_workers=settings.max_concurrent_workers,
+                max_workers=max_workers,
                 on_result=on_result_callback,
                 on_progress=on_progress_callback,
             )
@@ -228,7 +254,7 @@ async def run_test_suite(ctx: dict, run_id: str):
             # 11. Update TestRun status to completed
             await session.refresh(test_run)
             test_run.status = "completed"
-            test_run.completed_at = datetime.now(timezone.utc)
+            test_run.completed_at = datetime.utcnow()
             test_run.progress_pct = 100.0
             await session.commit()
 
@@ -246,7 +272,7 @@ async def run_test_suite(ctx: dict, run_id: str):
             try:
                 await session.refresh(test_run)
                 test_run.status = "failed"
-                test_run.completed_at = datetime.now(timezone.utc)
+                test_run.completed_at = datetime.utcnow()
                 await session.commit()
             except Exception:
                 logger.exception("Failed to update test run status to failed")

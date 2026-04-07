@@ -54,7 +54,7 @@ async def launch_run(
 ):
     """Launch a new test run for a test suite.
 
-    Creates a TestRun record with status=pending. Does not start execution.
+    Creates a TestRun record and enqueues it for execution via the arq worker.
     """
     suite_uuid = uuid.UUID(request.test_suite_id)
 
@@ -86,6 +86,22 @@ async def launch_run(
     session.add(run)
     await session.commit()
     await session.refresh(run)
+
+    # Enqueue the job in Redis for the arq worker
+    try:
+        import asyncio as _aio
+        from arq.connections import create_pool, RedisSettings
+        from backend.app.config import settings as app_settings
+        redis = await _aio.wait_for(
+            create_pool(RedisSettings.from_dsn(app_settings.redis_url)),
+            timeout=5.0,
+        )
+        await redis.enqueue_job("run_test_suite", str(run.id))
+        await redis.close()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Failed to enqueue run job: {e}")
+        # Run was created, worker can still pick it up manually
 
     return _run_to_response(run)
 

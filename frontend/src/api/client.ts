@@ -77,10 +77,14 @@ export interface ResultResponse {
   delay_ms: number;
   gain_db: number;
   noise_type: string;
+  original_text: string | null;
+  expected_intent: string | null;
+  expected_action: string | null;
   llm_response_text: string | null;
   asr_transcript: string | null;
   eval_score: number | null;
   eval_passed: boolean | null;
+  evaluator_type: string | null;
   total_latency_ms: number | null;
   error: string | null;
 }
@@ -108,6 +112,11 @@ export interface SynthesizeRequest {
   voice_ids?: string[];
   categories?: string[];
   languages?: string[];
+  providers?: string[];
+  genders?: string[];
+  voice_languages?: string[];
+  max_corpus?: number;
+  max_voices?: number;
 }
 
 export interface SynthesizeResponse {
@@ -162,8 +171,17 @@ export function syncVoices(): Promise<SyncVoicesResponse> {
   return request("/speech/voices/sync", { method: "POST" });
 }
 
-export function seedCorpus(): Promise<{ status: string; entries_created: number }> {
-  return request("/speech/corpus/seed", { method: "POST" });
+export function seedCorpus(
+  languages?: string[],
+  perCategory?: number
+): Promise<{ status: string; entries_created: number; languages: string[] }> {
+  return request("/speech/corpus/seed", {
+    method: "POST",
+    body: JSON.stringify({
+      ...(languages ? { languages } : {}),
+      ...(perCategory ? { per_category: perCategory } : {}),
+    }),
+  });
 }
 
 export function fetchCorpus(filters?: {
@@ -182,10 +200,54 @@ export function fetchCorpus(filters?: {
   return request(`/speech/corpus${qs ? `?${qs}` : ""}`);
 }
 
+export interface GeneratePreview {
+  corpus_entries: number;
+  voices: number;
+  total_combinations: number;
+  estimated_size_mb: number;
+  avg_duration_s: number;
+}
+
+export function synthesizePreview(
+  req: SynthesizeRequest
+): Promise<GeneratePreview> {
+  return request("/speech/synthesize/preview", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
 export function synthesizeSpeech(
   req: SynthesizeRequest
 ): Promise<SynthesizeResponse> {
   return request("/speech/synthesize", {
+    method: "POST",
+    body: JSON.stringify(req),
+  });
+}
+
+export interface GenerateWavsRequest {
+  categories?: string[];
+  languages?: string[];
+  providers?: string[];
+  genders?: string[];
+  voice_languages?: string[];
+  max_corpus?: number;
+  max_voices?: number;
+  max_total?: number;
+}
+
+export interface GenerateWavsResponse {
+  total_queued: number;
+  generated: number;
+  failed: number;
+  errors: string[];
+}
+
+export function generateWavs(
+  req: GenerateWavsRequest
+): Promise<GenerateWavsResponse> {
+  return request("/speech/generate-wavs", {
     method: "POST",
     body: JSON.stringify(req),
   });
@@ -289,8 +351,50 @@ export function getExportUrl(
 }
 
 // ---------------------------------------------------------------------------
+// Dashboard
+// ---------------------------------------------------------------------------
+
+export interface DashboardResponse {
+  total_runs: number;
+  total_cases: number;
+  overall_pass_rate: number | null;
+  overall_mean_score: number | null;
+  mean_latency_ms: number | null;
+  accuracy_by_snr: Array<Record<string, unknown>> | null;
+  accuracy_by_noise: Array<Record<string, unknown>> | null;
+  accuracy_by_backend: Array<Record<string, unknown>> | null;
+  echo_heatmap: {
+    row_labels: number[];
+    col_labels: number[];
+    values: Array<Array<number | null>>;
+    row_name: string;
+    col_name: string;
+  } | null;
+  latency_by_backend: Array<Record<string, unknown>> | null;
+  parameter_effects: Record<string, unknown> | null;
+  run_history: Array<Record<string, unknown>> | null;
+}
+
+export function fetchDashboard(): Promise<DashboardResponse> {
+  return request("/results/dashboard/aggregate");
+}
+
+// ---------------------------------------------------------------------------
 // Settings
 // ---------------------------------------------------------------------------
+
+export interface KeyStatusResponse {
+  openai: boolean;
+  google: boolean;
+  anthropic: boolean;
+  elevenlabs: boolean;
+  deepgram: boolean;
+  ollama: boolean;
+}
+
+export function fetchKeyStatus(): Promise<KeyStatusResponse> {
+  return request("/settings/key-status");
+}
 
 export interface SettingsResponse {
   openai_api_key: string | null;

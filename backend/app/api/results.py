@@ -16,6 +16,7 @@ from backend.app.config import settings
 from backend.app.models.base import get_session
 from backend.app.models.run import TestResult, TestRun
 from backend.app.models.test import TestCase
+from backend.app.models.speech import SpeechSample, CorpusEntry
 from backend.app.stats.analysis import (
     accuracy_by_group,
     pairwise_backend_comparison,
@@ -35,10 +36,14 @@ class ResultResponse(BaseModel):
     delay_ms: float
     gain_db: float
     noise_type: str
+    original_text: str | None = None
+    expected_intent: str | None = None
+    expected_action: str | None = None
     llm_response_text: str | None = None
     asr_transcript: str | None = None
     eval_score: float | None = None
     eval_passed: bool | None = None
+    evaluator_type: str | None = None
     total_latency_ms: float | None = None
     error: str | None = None
 
@@ -69,15 +74,17 @@ async def _load_results_for_run(
 ) -> list[dict]:
     """Load all results for a run joined with test case params, returned as dicts."""
     stmt = (
-        select(TestResult, TestCase)
+        select(TestResult, TestCase, CorpusEntry)
         .join(TestCase, TestResult.test_case_id == TestCase.id)
+        .outerjoin(SpeechSample, TestCase.speech_sample_id == SpeechSample.id)
+        .outerjoin(CorpusEntry, SpeechSample.corpus_entry_id == CorpusEntry.id)
         .where(TestResult.test_run_id == run_id)
     )
     result = await session.execute(stmt)
     rows = result.all()
 
     records = []
-    for tr, tc in rows:
+    for tr, tc, ce in rows:
         records.append({
             "test_case_id": str(tc.id),
             "pipeline_type": tc.pipeline,
@@ -86,10 +93,14 @@ async def _load_results_for_run(
             "delay_ms": tc.delay_ms,
             "gain_db": tc.gain_db,
             "noise_type": tc.noise_type,
+            "original_text": ce.text if ce else None,
+            "expected_intent": ce.expected_intent if ce else None,
+            "expected_action": ce.expected_action if ce else None,
             "llm_response_text": tr.llm_response_text,
             "asr_transcript": tr.asr_transcript,
             "eval_score": tr.evaluation_score,
             "eval_passed": tr.evaluation_passed,
+            "evaluator_type": tr.evaluator_type,
             "total_latency_ms": tr.llm_latency_ms,
             "error": (tr.evaluation_details_json or {}).get("error") if tr.evaluation_details_json else None,
         })
@@ -110,8 +121,10 @@ async def query_results(
 ):
     """Query test results with filtering and pagination."""
     stmt = (
-        select(TestResult, TestCase)
+        select(TestResult, TestCase, CorpusEntry)
         .join(TestCase, TestResult.test_case_id == TestCase.id)
+        .outerjoin(SpeechSample, TestCase.speech_sample_id == SpeechSample.id)
+        .outerjoin(CorpusEntry, SpeechSample.corpus_entry_id == CorpusEntry.id)
     )
 
     if run_id is not None:
@@ -141,15 +154,145 @@ async def query_results(
             delay_ms=tc.delay_ms or 0.0,
             gain_db=tc.gain_db or 0.0,
             noise_type=tc.noise_type or "",
+            original_text=ce.text if ce else None,
+            expected_intent=ce.expected_intent if ce else None,
+            expected_action=ce.expected_action if ce else None,
             llm_response_text=tr.llm_response_text,
             asr_transcript=tr.asr_transcript,
             eval_score=tr.evaluation_score,
             eval_passed=tr.evaluation_passed,
+            evaluator_type=tr.evaluator_type,
             total_latency_ms=tr.llm_latency_ms,
             error=(tr.evaluation_details_json or {}).get("error") if tr.evaluation_details_json else None,
         )
-        for tr, tc in rows
+        for tr, tc, ce in rows
     ]
+
+
+class DashboardResponse(BaseModel):
+    """Aggregated dashboard data across all completed runs."""
+    total_runs: int
+    total_cases: int
+    overall_pass_rate: float | None
+    overall_mean_score: float | None
+    mean_latency_ms: float | None
+    accuracy_by_snr: list[dict] | None = None
+    accuracy_by_noise: list[dict] | None = None
+    accuracy_by_backend: list[dict] | None = None
+    echo_heatmap: dict | None = None
+    latency_by_backend: list[dict] | None = None
+    parameter_effects: dict | None = None
+    run_history: list[dict] | None = None
+
+
+@router.get("/dashboard/aggregate", response_model=DashboardResponse)
+async def get_dashboard_aggregate(
+    session: AsyncSession = Depends(get_session),
+):
+    """Get aggregated dashboard metrics across all completed runs."""
+    # Find all completed runs
+    run_stmt = select(TestRun).where(TestRun.status == "completed")
+    run_result = await session.execute(run_stmt)
+    completed_runs = run_result.scalars().all()
+
+    if not completed_runs:
+        return DashboardResponse(
+            total_runs=0,
+            total_cases=0,
+            overall_pass_rate=None,
+            overall_mean_score=None,
+            mean_latency_ms=None,
+        )
+
+    # Load results from all completed runs
+    all_records = []
+    for run in completed_runs:
+        records = await _load_results_for_run(session, run.id)
+        for r in records:
+            r["run_id"] = str(run.id)
+            r["run_started_at"] = run.started_at.isoformat() if run.started_at else None
+        all_records.extend(records)
+
+    if not all_records:
+        return DashboardResponse(
+            total_runs=len(completed_runs),
+            total_cases=0,
+            overall_pass_rate=None,
+            overall_mean_score=None,
+            mean_latency_ms=None,
+        )
+
+    df = pd.DataFrame(all_records)
+
+    # Summary
+    summary = summary_statistics(df)
+
+    # Accuracy by SNR
+    snr_acc = accuracy_by_group(df, "snr_db") if "snr_db" in df.columns and df["snr_db"].nunique() > 1 else pd.DataFrame()
+
+    # Accuracy by noise type
+    noise_acc = accuracy_by_group(df, "noise_type") if "noise_type" in df.columns and df["noise_type"].nunique() > 1 else pd.DataFrame()
+
+    # Accuracy by backend
+    backend_acc = accuracy_by_group(df, "llm_backend") if "llm_backend" in df.columns and df["llm_backend"].nunique() > 1 else pd.DataFrame()
+
+    # Echo heatmap (delay_ms vs gain_db)
+    echo_heatmap = None
+    if "delay_ms" in df.columns and "gain_db" in df.columns:
+        if df["delay_ms"].nunique() > 1 and df["gain_db"].nunique() > 1:
+            pivot = pivot_heatmap(df, "delay_ms", "gain_db", value_col="eval_score")
+            echo_heatmap = {
+                "row_labels": [float(x) for x in pivot.index.tolist()],
+                "col_labels": [float(x) for x in pivot.columns.tolist()],
+                "values": [
+                    [None if pd.isna(v) else float(v) for v in row]
+                    for row in pivot.values.tolist()
+                ],
+                "row_name": "delay_ms",
+                "col_name": "gain_db",
+            }
+
+    # Latency by backend
+    latency_data = None
+    if "total_latency_ms" in df.columns and "llm_backend" in df.columns:
+        lat_groups = df.groupby("llm_backend")["total_latency_ms"].agg(
+            ["mean", "median", "std", "count"]
+        ).reset_index()
+        lat_groups.columns = ["backend", "mean_ms", "median_ms", "std_ms", "count"]
+        latency_data = lat_groups.to_dict("records")
+
+    # Parameter effects
+    factors = [c for c in ["snr_db", "delay_ms", "gain_db", "noise_type", "llm_backend", "pipeline_type"] if c in df.columns]
+    param_effects = parameter_effects_anova(df, factors) if factors else None
+
+    # Run history: per-run pass rate over time
+    run_history = []
+    for run in completed_runs:
+        run_df = df[df["run_id"] == str(run.id)]
+        if not run_df.empty and "eval_passed" in run_df.columns:
+            run_history.append({
+                "run_id": str(run.id)[:8],
+                "started_at": run.started_at.isoformat() if run.started_at else None,
+                "total_cases": len(run_df),
+                "pass_rate": float(run_df["eval_passed"].mean()),
+                "mean_score": float(run_df["eval_score"].mean()) if "eval_score" in run_df.columns else None,
+                "mean_latency_ms": float(run_df["total_latency_ms"].mean()) if "total_latency_ms" in run_df.columns and run_df["total_latency_ms"].notna().any() else None,
+            })
+
+    return DashboardResponse(
+        total_runs=len(completed_runs),
+        total_cases=len(all_records),
+        overall_pass_rate=summary.get("overall_pass_rate"),
+        overall_mean_score=summary.get("overall_mean_score"),
+        mean_latency_ms=summary.get("mean_latency_ms"),
+        accuracy_by_snr=snr_acc.to_dict("records") if not snr_acc.empty else None,
+        accuracy_by_noise=noise_acc.to_dict("records") if not noise_acc.empty else None,
+        accuracy_by_backend=backend_acc.to_dict("records") if not backend_acc.empty else None,
+        echo_heatmap=echo_heatmap,
+        latency_by_backend=latency_data,
+        parameter_effects=param_effects,
+        run_history=run_history if run_history else None,
+    )
 
 
 @router.get("/{run_id}/stats", response_model=StatsResponse)

@@ -10,7 +10,8 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from .config import settings
-from .api import speech, tests, runs, results, ws, settings
+from .api import speech, tests, runs, results, ws
+from .api import settings as settings_router
 
 
 @asynccontextmanager
@@ -52,7 +53,7 @@ app.include_router(tests.router, prefix="/api/tests", tags=["Tests"])
 app.include_router(runs.router, prefix="/api/runs", tags=["Runs"])
 app.include_router(results.router, prefix="/api/results", tags=["Results"])
 app.include_router(ws.router, prefix="/api/ws", tags=["WebSocket"])
-app.include_router(settings.router, prefix="/api/settings", tags=["Settings"])
+app.include_router(settings_router.router, prefix="/api/settings", tags=["Settings"])
 
 
 @app.get("/api/health")

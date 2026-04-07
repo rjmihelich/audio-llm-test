@@ -32,9 +32,13 @@ class SettingsResponse(BaseModel):
     google_api_key: str | None = None
     anthropic_api_key: str | None = None
     elevenlabs_api_key: str | None = None
+    deepgram_api_key: str | None = None
     ollama_base_url: str = ""
     default_sample_rate: int = 16000
     max_concurrent_workers: int = 50
+    default_llm_backend: str = ""
+    default_stt_backend: str = ""
+    default_tts_provider: str = ""
 
 
 class UpdateKeysRequest(BaseModel):
@@ -42,7 +46,11 @@ class UpdateKeysRequest(BaseModel):
     google_api_key: str | None = None
     anthropic_api_key: str | None = None
     elevenlabs_api_key: str | None = None
+    deepgram_api_key: str | None = None
     ollama_base_url: str | None = None
+    default_llm_backend: str | None = None
+    default_stt_backend: str | None = None
+    default_tts_provider: str | None = None
 
 
 class KeyValidationResponse(BaseModel):
@@ -60,7 +68,11 @@ _KEY_TO_ENV = {
     "google_api_key": "ALT_GOOGLE_API_KEY",
     "anthropic_api_key": "ALT_ANTHROPIC_API_KEY",
     "elevenlabs_api_key": "ALT_ELEVENLABS_API_KEY",
+    "deepgram_api_key": "ALT_DEEPGRAM_API_KEY",
     "ollama_base_url": "ALT_OLLAMA_BASE_URL",
+    "default_llm_backend": "ALT_DEFAULT_LLM_BACKEND",
+    "default_stt_backend": "ALT_DEFAULT_STT_BACKEND",
+    "default_tts_provider": "ALT_DEFAULT_TTS_PROVIDER",
 }
 
 
@@ -96,6 +108,40 @@ def _persist_to_env(updates: dict[str, str]) -> None:
 # Endpoints
 # ---------------------------------------------------------------------------
 
+def _is_valid_key(key: str) -> bool:
+    """Check if a key looks like a real API key (not a placeholder)."""
+    if not key or len(key) < 10:
+        return False
+    # Common placeholders
+    if key in ("sk-...", "sk-ant-...", "AI...", "xi-...", "..."):
+        return False
+    if key.startswith("sk-...") or key.startswith("..."):
+        return False
+    return True
+
+
+class KeyStatusResponse(BaseModel):
+    openai: bool = False
+    google: bool = False
+    anthropic: bool = False
+    elevenlabs: bool = False
+    deepgram: bool = False
+    ollama: bool = True  # Always available if URL is set
+
+
+@router.get("/key-status", response_model=KeyStatusResponse)
+async def get_key_status():
+    """Return which API keys are valid (not placeholders)."""
+    return KeyStatusResponse(
+        openai=_is_valid_key(settings.openai_api_key),
+        google=_is_valid_key(settings.google_api_key),
+        anthropic=_is_valid_key(settings.anthropic_api_key),
+        elevenlabs=_is_valid_key(settings.elevenlabs_api_key),
+        deepgram=_is_valid_key(settings.deepgram_api_key),
+        ollama=bool(settings.ollama_base_url),
+    )
+
+
 @router.get("", response_model=SettingsResponse)
 async def get_settings():
     """Return current settings with API keys masked."""
@@ -104,9 +150,13 @@ async def get_settings():
         google_api_key=_mask(settings.google_api_key),
         anthropic_api_key=_mask(settings.anthropic_api_key),
         elevenlabs_api_key=_mask(settings.elevenlabs_api_key),
+        deepgram_api_key=_mask(settings.deepgram_api_key),
         ollama_base_url=settings.ollama_base_url,
         default_sample_rate=settings.default_sample_rate,
         max_concurrent_workers=settings.max_concurrent_workers,
+        default_llm_backend=settings.default_llm_backend,
+        default_stt_backend=settings.default_stt_backend,
+        default_tts_provider=settings.default_tts_provider,
     )
 
 
@@ -127,9 +177,21 @@ async def update_settings(req: UpdateKeysRequest):
     if req.elevenlabs_api_key is not None:
         settings.elevenlabs_api_key = req.elevenlabs_api_key
         updates["elevenlabs_api_key"] = req.elevenlabs_api_key
+    if req.deepgram_api_key is not None:
+        settings.deepgram_api_key = req.deepgram_api_key
+        updates["deepgram_api_key"] = req.deepgram_api_key
     if req.ollama_base_url is not None:
         settings.ollama_base_url = req.ollama_base_url
         updates["ollama_base_url"] = req.ollama_base_url
+    if req.default_llm_backend is not None:
+        settings.default_llm_backend = req.default_llm_backend
+        updates["default_llm_backend"] = req.default_llm_backend
+    if req.default_stt_backend is not None:
+        settings.default_stt_backend = req.default_stt_backend
+        updates["default_stt_backend"] = req.default_stt_backend
+    if req.default_tts_provider is not None:
+        settings.default_tts_provider = req.default_tts_provider
+        updates["default_tts_provider"] = req.default_tts_provider
 
     if updates:
         _persist_to_env(updates)

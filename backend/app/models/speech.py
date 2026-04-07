@@ -18,6 +18,12 @@ class ProviderEnum(str, enum.Enum):
     openai = "openai"
     google = "google"
     elevenlabs = "elevenlabs"
+    edge = "edge"
+    gtts = "gtts"
+    piper = "piper"
+    coqui = "coqui"
+    bark = "bark"
+    espeak = "espeak"
 
 
 class GenderEnum(str, enum.Enum):

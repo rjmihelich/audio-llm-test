@@ -4,12 +4,14 @@ import SpeechCorpus from "./pages/SpeechCorpus";
 import TestSuites from "./pages/TestSuites";
 import RunMonitor from "./pages/RunMonitor";
 import Results from "./pages/Results";
+import RunsList from "./pages/RunsList";
 import Settings from "./pages/Settings";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: "\u{1F4CA}" },
   { to: "/corpus", label: "Speech Corpus", icon: "\u{1F399}" },
   { to: "/tests", label: "Test Suites", icon: "\u{1F9EA}" },
+  { to: "/runs", label: "Runs & Results", icon: "\u{1F3AF}" },
   { to: "/settings", label: "Settings", icon: "\u{2699}" },
 ];
 
@@ -52,6 +54,7 @@ export default function App() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/corpus" element={<SpeechCorpus />} />
           <Route path="/tests" element={<TestSuites />} />
+          <Route path="/runs" element={<RunsList />} />
           <Route path="/runs/:id" element={<RunMonitor />} />
           <Route path="/results/:id" element={<Results />} />
           <Route path="/settings" element={<Settings />} />

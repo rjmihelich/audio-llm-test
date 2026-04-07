@@ -1,10 +1,46 @@
+# Environment & secrets
 .env
-storage/
+
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+*.egg
 .pytest_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+
+# Node / Frontend
 node_modules/
 dist/
 build/
-*.egg-info/
-.venv/
+
+# Runtime data
+storage/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE / tools
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+
+# Generated docs / images (not part of the app)
+*.pdf
+*.HEIC
+
+# Runtime
+logs/
+.pids/
+
+# Misc
+curl
+*.sqlite3

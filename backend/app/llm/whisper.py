@@ -11,7 +11,10 @@ from .base import Transcription
 
 
 class WhisperLocalBackend:
-    """Local Whisper inference using openai-whisper package."""
+    """Local Whisper inference using faster-whisper (CTranslate2).
+
+    Much lighter on memory than openai-whisper + torch.
+    """
 
     def __init__(self, model_size: str = "base"):
         self._model_size = model_size
@@ -23,41 +26,54 @@ class WhisperLocalBackend:
 
     def _ensure_model(self):
         if self._model is None:
-            import whisper
-            self._model = whisper.load_model(self._model_size)
+            from faster_whisper import WhisperModel
+            self._model = WhisperModel(
+                self._model_size,
+                device="cpu",
+                compute_type="int8",
+            )
 
     async def transcribe(self, audio: AudioBuffer) -> Transcription:
         import asyncio
+        import numpy as np
         self._ensure_model()
 
-        # Whisper expects 16kHz
+        # Whisper expects 16kHz float32
         audio_16k = audio.resample(16000)
+        samples = audio_16k.samples.astype(np.float32)
 
         t0 = time.monotonic()
-        # Run in executor since whisper is synchronous
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(
-            None,
-            lambda: self._model.transcribe(
-                audio_16k.samples.astype("float32"),
-                fp16=False,
-            ),
-        )
+
+        def _transcribe():
+            segments_gen, info = self._model.transcribe(
+                samples,
+                beam_size=1,
+                best_of=1,
+                language="en",
+            )
+            segments = list(segments_gen)
+            return segments, info
+
+        segments, info = await loop.run_in_executor(None, _transcribe)
         latency_ms = (time.monotonic() - t0) * 1000
 
-        segments = result.get("segments", [])
+        text = " ".join(seg.text.strip() for seg in segments).strip()
         word_timestamps = []
         for seg in segments:
             word_timestamps.append({
-                "start": seg["start"],
-                "end": seg["end"],
-                "text": seg["text"],
+                "start": seg.start,
+                "end": seg.end,
+                "text": seg.text.strip(),
             })
 
+        avg_logprob = sum(seg.avg_logprob for seg in segments) / max(len(segments), 1)
+        confidence = min(1.0, max(0.0, 1.0 + avg_logprob))
+
         return Transcription(
-            text=result["text"].strip(),
-            language=result.get("language", ""),
-            confidence=1.0 - result.get("no_speech_prob", 0.0) if segments else 0.0,
+            text=text,
+            language=info.language if info else "",
+            confidence=confidence,
             word_timestamps=word_timestamps,
             latency_ms=latency_ms,
         )
