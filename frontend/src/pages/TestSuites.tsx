@@ -335,14 +335,49 @@ function PillSelect({ options, selected, onToggle, format }: {
   );
 }
 
+function FilterColumn({ label, items, selected, onToggle, onClear, formatLabel }: {
+  label: string;
+  items: Record<string, number>;
+  selected: string[];
+  onToggle: (v: string) => void;
+  onClear: () => void;
+  formatLabel?: (v: string) => string;
+}) {
+  const sorted = Object.entries(items).sort(([, a], [, b]) => b - a);
+  return (
+    <div>
+      <p className="text-[10px] font-medium text-gray-500 mb-1.5">{label}</p>
+      <div className="space-y-1">
+        {sorted.map(([key, count]) => (
+          <label key={key} className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={selected.includes(key)}
+              onChange={() => onToggle(key)}
+              className="rounded border-gray-300 h-3.5 w-3.5"
+            />
+            <span className="flex-1 truncate">{formatLabel ? formatLabel(key) : key}</span>
+            <span className="text-[10px] text-gray-400 tabular-nums">{count.toLocaleString()}</span>
+          </label>
+        ))}
+      </div>
+      {selected.length > 0 && (
+        <button onClick={onClear} className="mt-1 text-[10px] text-blue-500 hover:text-blue-700">clear</button>
+      )}
+    </div>
+  );
+}
+
 function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [selectedProviders, setSelectedProviders] = useState<string[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
+  const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
+  const [selectedGenders, setSelectedGenders] = useState<string[]>([]);
   const [snrValues, setSnrValues] = useState<number[]>([0, 10, 20]);
   const [speechLevels, setSpeechLevels] = useState<number[]>([0]);
-  const [noiseMix, setNoiseMix] = useState<Record<string, number>>({ road_noise: 1.0 });
+  const [noiseTypes, setNoiseTypes] = useState<string[]>(["road_noise"]);
   const [delayRange, setDelayRange] = useState<number[]>([0]);
   const [gainRange, setGainRange] = useState<number[]>([-60]);
   const [pipelines, setPipelines] = useState<string[]>(["asr_text"]);
@@ -364,23 +399,20 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
   }));
   const ALL_BACKENDS: BackendDef[] = [...ollamaBackends, ...CLOUD_BACKENDS];
 
-  // Derive active noise types from mixer sliders
-  const activeNoiseTypes = Object.entries(noiseMix)
-    .filter(([, gain]) => gain > 0)
-    .map(([key]) => key);
-
   function buildConfig(): SweepConfigRequest {
     return {
       name,
       description,
       snr_db_values: snrValues,
       speech_level_db_values: speechLevels,
-      noise_types: activeNoiseTypes.length > 0 ? activeNoiseTypes : ["silence"],
+      noise_types: noiseTypes.length > 0 ? noiseTypes : ["silence"],
       echo: { delay_ms_values: delayRange, gain_db_values: gainRange },
       pipelines,
       llm_backends: backends,
       ...(selectedProviders.length > 0 ? { voice_providers: selectedProviders } : {}),
       ...(selectedCategories.length > 0 ? { corpus_categories: selectedCategories } : {}),
+      ...(selectedLanguages.length > 0 ? { voice_languages: selectedLanguages } : {}),
+      ...(selectedGenders.length > 0 ? { voice_genders: selectedGenders } : {}),
     };
   }
 
@@ -432,70 +464,48 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
 
       {/* Row 2: Audio Sources + Pipeline/Backends side by side */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Audio Sources */}
+        {/* Audio Sources — filters */}
         <div className="bg-blue-50/60 rounded-lg p-4 border border-blue-100">
           <div className="flex items-center justify-between mb-3">
             <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Audio Sources</h4>
             {audioSources.data && (
               <span className="text-[11px] font-medium text-blue-600">
-                {audioSources.data.total_samples.toLocaleString()} samples available
+                {audioSources.data.total_samples.toLocaleString()} samples
               </span>
             )}
           </div>
-          {audioSources.data && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <p className="text-[10px] font-medium text-gray-500 mb-1.5">PROVIDER</p>
-                <div className="space-y-1">
-                  {Object.entries(audioSources.data.providers)
-                    .sort(([, a], [, b]) => b - a)
-                    .map(([provider, count]) => (
-                      <label key={provider} className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={selectedProviders.includes(provider)}
-                          onChange={() => toggleItem(selectedProviders, provider, setSelectedProviders)}
-                          className="rounded border-gray-300 h-3.5 w-3.5"
-                        />
-                        <span className="flex-1">{provider}</span>
-                        <span className="text-[10px] text-gray-400 tabular-nums">{count.toLocaleString()}</span>
-                      </label>
-                    ))}
-                </div>
-                {selectedProviders.length > 0 && (
-                  <button onClick={() => setSelectedProviders([])} className="mt-1 text-[10px] text-blue-500 hover:text-blue-700">clear</button>
-                )}
-              </div>
-              <div>
-                <p className="text-[10px] font-medium text-gray-500 mb-1.5">CATEGORY</p>
-                <div className="space-y-1">
-                  {Object.entries(audioSources.data.categories)
-                    .sort(([, a], [, b]) => b - a)
-                    .map(([category, count]) => (
-                      <label key={category} className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={selectedCategories.includes(category)}
-                          onChange={() => toggleItem(selectedCategories, category, setSelectedCategories)}
-                          className="rounded border-gray-300 h-3.5 w-3.5"
-                        />
-                        <span className="flex-1">{category.replace(/_/g, " ")}</span>
-                        <span className="text-[10px] text-gray-400 tabular-nums">{count.toLocaleString()}</span>
-                      </label>
-                    ))}
-                </div>
-                {selectedCategories.length > 0 && (
-                  <button onClick={() => setSelectedCategories([])} className="mt-1 text-[10px] text-blue-500 hover:text-blue-700">clear</button>
-                )}
-              </div>
+          {audioSources.data ? (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              {/* Provider */}
+              <FilterColumn label="PROVIDER" items={audioSources.data.providers}
+                selected={selectedProviders} onToggle={(v) => toggleItem(selectedProviders, v, setSelectedProviders)}
+                onClear={() => setSelectedProviders([])} />
+              {/* Category */}
+              <FilterColumn label="CATEGORY" items={audioSources.data.categories}
+                selected={selectedCategories} onToggle={(v) => toggleItem(selectedCategories, v, setSelectedCategories)}
+                onClear={() => setSelectedCategories([])} formatLabel={(v) => v.replace(/_/g, " ")} />
+              {/* Language */}
+              <FilterColumn label="LANGUAGE" items={audioSources.data.languages}
+                selected={selectedLanguages} onToggle={(v) => toggleItem(selectedLanguages, v, setSelectedLanguages)}
+                onClear={() => setSelectedLanguages([])} />
+              {/* Gender */}
+              <FilterColumn label="GENDER" items={audioSources.data.genders}
+                selected={selectedGenders} onToggle={(v) => toggleItem(selectedGenders, v, setSelectedGenders)}
+                onClear={() => setSelectedGenders([])} />
             </div>
+          ) : (
+            <p className="text-xs text-gray-400">Loading...</p>
           )}
-          {(selectedProviders.length > 0 || selectedCategories.length > 0) && (
+          {(selectedProviders.length > 0 || selectedCategories.length > 0 || selectedLanguages.length > 0 || selectedGenders.length > 0) && (
             <p className="mt-2 text-[10px] text-blue-600 border-t border-blue-200 pt-2">
-              Filtered to: {[...selectedProviders, ...selectedCategories.map(c => c.replace(/_/g, " "))].join(", ")}
+              Filters: {[
+                ...selectedProviders,
+                ...selectedCategories.map(c => c.replace(/_/g, " ")),
+                ...selectedLanguages,
+                ...selectedGenders,
+              ].join(", ")}
             </p>
           )}
-          {!audioSources.data && <p className="text-xs text-gray-400">Loading...</p>}
         </div>
 
         {/* Pipeline & Backends */}
@@ -578,7 +588,7 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
         </div>
       </div>
 
-      {/* Row 3: Audio Degradation — mixer style */}
+      {/* Row 3: Audio Degradation — pill selectors */}
       <div>
         <div className="flex items-center gap-3 mb-3">
           <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Audio Degradation</h4>
@@ -590,139 +600,64 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
           </button>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {/* Noise Mixer */}
-          <div className="bg-gray-900 rounded-lg p-4 border border-gray-700">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Noise Sources</p>
-              <p className="text-[10px] text-gray-500">{activeNoiseTypes.length} active</p>
-            </div>
-            <div className="space-y-3">
-              {NOISE_SOURCES.map((src) => {
-                const gain = noiseMix[src.key] ?? 0;
-                const active = gain > 0;
-                return (
-                  <div key={src.key} className="group">
-                    <div className="flex items-center gap-3">
-                      {/* On/off toggle */}
-                      <button
-                        onClick={() => {
-                          setNoiseMix((prev) => ({
-                            ...prev,
-                            [src.key]: active ? 0 : 1.0,
-                          }));
-                        }}
-                        className={`w-8 h-4 rounded-full transition-colors relative flex-shrink-0 ${
-                          active ? "bg-green-500" : "bg-gray-600"
-                        }`}
-                      >
-                        <span
-                          className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-transform ${
-                            active ? "translate-x-4" : "translate-x-0.5"
-                          }`}
-                        />
-                      </button>
-
-                      {/* Label */}
-                      <div className="flex-1 min-w-0">
-                        <p className={`text-xs font-medium ${active ? "text-white" : "text-gray-500"}`}>
-                          {src.label}
-                        </p>
-                        <p className="text-[10px] text-gray-600 truncate">{src.desc}</p>
-                      </div>
-
-                      {/* Gain slider */}
-                      <div className="flex items-center gap-2 w-36">
-                        <input
-                          type="range"
-                          min={0}
-                          max={1}
-                          step={0.05}
-                          value={gain}
-                          onChange={(e) =>
-                            setNoiseMix((prev) => ({
-                              ...prev,
-                              [src.key]: parseFloat(e.target.value),
-                            }))
-                          }
-                          className="flex-1 h-1 accent-green-500 bg-gray-700 rounded-full appearance-none cursor-pointer disabled:opacity-30"
-                          disabled={!active}
-                        />
-                        <span className={`text-[10px] font-mono w-8 text-right ${active ? "text-green-400" : "text-gray-600"}`}>
-                          {active ? `${Math.round(gain * 100)}%` : "OFF"}
-                        </span>
-                      </div>
-                    </div>
-
-                    {/* Level meter visual (decorative) */}
-                    {active && (
-                      <div className="ml-11 mt-1 h-1 rounded-full overflow-hidden bg-gray-800">
-                        <div
-                          className="h-full rounded-full transition-all duration-300"
-                          style={{
-                            width: `${gain * 100}%`,
-                            background: gain > 0.8
-                              ? "linear-gradient(to right, #22c55e, #eab308, #ef4444)"
-                              : gain > 0.5
-                              ? "linear-gradient(to right, #22c55e, #eab308)"
-                              : "#22c55e",
-                          }}
-                        />
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+        <div className="space-y-3">
+          {/* SNR */}
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500 w-24 shrink-0">SNR (dB)</span>
+            <PillSelect
+              options={SNR_OPTIONS}
+              selected={snrValues}
+              onToggle={(v) => toggleItem(snrValues, v as number, setSnrValues)}
+              format={(v) => `${v}`}
+            />
           </div>
 
-          {/* SNR + Advanced */}
-          <div className="space-y-3">
-            {/* SNR */}
-            <div>
-              <span className="text-xs text-gray-500 block mb-1.5">SNR (dB)</span>
-              <PillSelect
-                options={SNR_OPTIONS}
-                selected={snrValues}
-                onToggle={(v) => toggleItem(snrValues, v as number, setSnrValues)}
-                format={(v) => `${v}`}
-              />
-            </div>
+          {/* Noise */}
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500 w-24 shrink-0">Noise</span>
+            <PillSelect
+              options={NOISE_SOURCES.map(s => s.key)}
+              selected={noiseTypes}
+              onToggle={(v) => toggleItem(noiseTypes, v as string, setNoiseTypes)}
+              format={(v) => NOISE_SOURCES.find(s => s.key === v)?.label ?? String(v)}
+            />
+          </div>
 
-            {/* Advanced: Speech Level, Echo */}
-            {showAdvanced && (
-              <>
+          {/* Advanced: Speech Level, Echo */}
+          {showAdvanced && (
+            <>
+              <div className="flex items-start gap-3">
+                <span className="text-xs text-gray-500 w-24 shrink-0 pt-1">Speech Level</span>
                 <div>
-                  <span className="text-xs text-gray-500 block mb-1.5">Speech Level (dB)</span>
                   <PillSelect
                     options={SPEECH_LEVEL_OPTIONS}
                     selected={speechLevels}
                     onToggle={(v) => toggleItem(speechLevels, v as number, setSpeechLevels)}
-                    format={(v) => `${Number(v) > 0 ? "+" : ""}${v}`}
+                    format={(v) => `${Number(v) > 0 ? "+" : ""}${v} dB`}
                   />
                   <p className="text-[10px] text-gray-400 mt-1">0 = original, negative = whisper, positive = loud/clip</p>
                 </div>
-                <div>
-                  <span className="text-xs text-gray-500 block mb-1.5">Echo Delay</span>
-                  <PillSelect
-                    options={[0, 25, 50, 100, 150, 200, 300]}
-                    selected={delayRange}
-                    onToggle={(v) => toggleItem(delayRange, v as number, setDelayRange)}
-                    format={(v) => `${v}ms`}
-                  />
-                </div>
-                <div>
-                  <span className="text-xs text-gray-500 block mb-1.5">Echo Gain</span>
-                  <PillSelect
-                    options={[-60, -40, -20, -10, -6, -3]}
-                    selected={gainRange}
-                    onToggle={(v) => toggleItem(gainRange, v as number, setGainRange)}
-                    format={(v) => `${v} dB`}
-                  />
-                </div>
-              </>
-            )}
-          </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 w-24 shrink-0">Echo Delay</span>
+                <PillSelect
+                  options={[0, 25, 50, 100, 150, 200, 300]}
+                  selected={delayRange}
+                  onToggle={(v) => toggleItem(delayRange, v as number, setDelayRange)}
+                  format={(v) => `${v}ms`}
+                />
+              </div>
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 w-24 shrink-0">Echo Gain</span>
+                <PillSelect
+                  options={[-60, -40, -20, -10, -6, -3]}
+                  selected={gainRange}
+                  onToggle={(v) => toggleItem(gainRange, v as number, setGainRange)}
+                  format={(v) => `${v} dB`}
+                />
+              </div>
+            </>
+          )}
         </div>
       </div>
 

@@ -46,6 +46,8 @@ class SweepConfigRequest(BaseModel):
     llm_backends: list[str] = Field(default=[])
     voice_ids: list[str] | None = None
     voice_providers: list[str] | None = None
+    voice_languages: list[str] | None = None
+    voice_genders: list[str] | None = None
     corpus_categories: list[str] | None = None
     corpus_entry_ids: list[str] | None = None
     system_prompt: str = "You are a helpful in-car voice assistant."
@@ -83,24 +85,32 @@ async def create_test_suite(
         sample_stmt = sample_stmt.where(
             SpeechSample.voice_id.in_([uuid.UUID(v) for v in config.voice_ids])
         )
+    # Build Voice join conditions
+    voice_joined = False
     if config.voice_providers:
         sample_stmt = sample_stmt.join(Voice).where(
             Voice.provider.in_(config.voice_providers)
         )
+        voice_joined = True
+    if config.voice_languages:
+        if not voice_joined:
+            sample_stmt = sample_stmt.join(Voice)
+            voice_joined = True
+        sample_stmt = sample_stmt.where(Voice.language.in_(config.voice_languages))
+    if config.voice_genders:
+        if not voice_joined:
+            sample_stmt = sample_stmt.join(Voice)
+            voice_joined = True
+        sample_stmt = sample_stmt.where(Voice.gender.in_(config.voice_genders))
     if config.corpus_entry_ids:
         sample_stmt = sample_stmt.where(
             SpeechSample.corpus_entry_id.in_([uuid.UUID(c) for c in config.corpus_entry_ids])
         )
-    # Filter by corpus categories requires a join
+    # Filter by corpus categories
     if config.corpus_categories:
-        if not config.voice_providers:  # avoid double join
-            sample_stmt = sample_stmt.join(CorpusEntry).where(
-                CorpusEntry.category.in_(config.corpus_categories)
-            )
-        else:
-            sample_stmt = sample_stmt.join(CorpusEntry).where(
-                CorpusEntry.category.in_(config.corpus_categories)
-            )
+        sample_stmt = sample_stmt.join(CorpusEntry).where(
+            CorpusEntry.category.in_(config.corpus_categories)
+        )
 
     sample_result = await session.execute(sample_stmt)
     samples = sample_result.scalars().all()
@@ -229,12 +239,14 @@ async def list_test_suites(session: AsyncSession = Depends(get_session)):
 class AudioSourcesResponse(BaseModel):
     providers: dict[str, int]
     categories: dict[str, int]
+    languages: dict[str, int]
+    genders: dict[str, int]
     total_samples: int
 
 
 @router.get("/suites/audio-sources", response_model=AudioSourcesResponse)
 async def get_audio_sources(session: AsyncSession = Depends(get_session)):
-    """Get available audio sources (providers and categories) with sample counts."""
+    """Get available audio sources with sample counts by provider, category, language, gender."""
     from backend.app.models.speech import CorpusEntry, Voice
 
     provider_stmt = (
@@ -255,11 +267,33 @@ async def get_audio_sources(session: AsyncSession = Depends(get_session)):
     category_result = await session.execute(category_stmt)
     categories = {row[0]: row[1] for row in category_result.all()}
 
+    language_stmt = (
+        select(Voice.language, func.count(SpeechSample.id))
+        .join(Voice, SpeechSample.voice_id == Voice.id)
+        .where(SpeechSample.status == "ready")
+        .group_by(Voice.language)
+    )
+    language_result = await session.execute(language_stmt)
+    languages = {row[0]: row[1] for row in language_result.all() if row[0]}
+
+    gender_stmt = (
+        select(Voice.gender, func.count(SpeechSample.id))
+        .join(Voice, SpeechSample.voice_id == Voice.id)
+        .where(SpeechSample.status == "ready")
+        .group_by(Voice.gender)
+    )
+    gender_result = await session.execute(gender_stmt)
+    genders = {row[0]: row[1] for row in gender_result.all() if row[0]}
+
     total_stmt = select(func.count()).select_from(SpeechSample).where(SpeechSample.status == "ready")
     total_result = await session.execute(total_stmt)
     total = total_result.scalar() or 0
 
-    return AudioSourcesResponse(providers=providers, categories=categories, total_samples=total)
+    return AudioSourcesResponse(
+        providers=providers, categories=categories,
+        languages=languages, genders=genders,
+        total_samples=total,
+    )
 
 
 @router.get("/suites/{suite_id}", response_model=TestSuiteResponse)
@@ -317,23 +351,30 @@ async def preview_sweep(
         sample_stmt = sample_stmt.where(
             SpeechSample.voice_id.in_([uuid.UUID(v) for v in config.voice_ids])
         )
+    voice_joined = False
     if config.voice_providers:
         sample_stmt = sample_stmt.join(Voice).where(
             Voice.provider.in_(config.voice_providers)
         )
+        voice_joined = True
+    if config.voice_languages:
+        if not voice_joined:
+            sample_stmt = sample_stmt.join(Voice)
+            voice_joined = True
+        sample_stmt = sample_stmt.where(Voice.language.in_(config.voice_languages))
+    if config.voice_genders:
+        if not voice_joined:
+            sample_stmt = sample_stmt.join(Voice)
+            voice_joined = True
+        sample_stmt = sample_stmt.where(Voice.gender.in_(config.voice_genders))
     if config.corpus_entry_ids:
         sample_stmt = sample_stmt.where(
             SpeechSample.corpus_entry_id.in_([uuid.UUID(c) for c in config.corpus_entry_ids])
         )
     if config.corpus_categories:
-        if not config.voice_providers:
-            sample_stmt = sample_stmt.join(CorpusEntry).where(
-                CorpusEntry.category.in_(config.corpus_categories)
-            )
-        else:
-            sample_stmt = sample_stmt.join(CorpusEntry).where(
-                CorpusEntry.category.in_(config.corpus_categories)
-            )
+        sample_stmt = sample_stmt.join(CorpusEntry).where(
+            CorpusEntry.category.in_(config.corpus_categories)
+        )
 
     count_result = await session.execute(sample_stmt)
     n_speech = count_result.scalar() or 0

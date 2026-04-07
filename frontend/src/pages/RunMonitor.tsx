@@ -173,13 +173,10 @@ export default function RunMonitor() {
     }
   }, [completedCases, run.data?.status]);
 
-  // Auto-scroll
+  // Track result count (no auto-scroll — user stays where they are)
   const resultCount = polledResults.data?.length ?? 0;
   useEffect(() => {
-    if (resultCount > prevCountRef.current) {
-      logsEndRef.current?.scrollIntoView({ behavior: "smooth" });
-      prevCountRef.current = resultCount;
-    }
+    prevCountRef.current = resultCount;
   }, [resultCount]);
 
   // Audio playback

@@ -113,6 +113,8 @@ export interface SweepConfigRequest {
   llm_backends: string[];
   voice_ids?: string[];
   voice_providers?: string[];
+  voice_languages?: string[];
+  voice_genders?: string[];
   corpus_categories?: string[];
   corpus_entry_ids?: string[];
   system_prompt?: string;
@@ -121,6 +123,8 @@ export interface SweepConfigRequest {
 export interface AudioSourcesResponse {
   providers: Record<string, number>;
   categories: Record<string, number>;
+  languages: Record<string, number>;
+  genders: Record<string, number>;
   total_samples: number;
 }
 
