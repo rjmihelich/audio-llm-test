@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "react-router-dom";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { listRuns, launchRun, type RunResponse } from "../api/client";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { listRuns, launchRun, deleteRun, type RunResponse } from "../api/client";
 
 function statusColor(status: string) {
   switch (status) {
@@ -38,6 +38,7 @@ function duration(run: RunResponse) {
 
 export default function RunsList() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { data: runs, isLoading } = useQuery({
     queryKey: ["runs"],
     queryFn: listRuns,
@@ -52,6 +53,11 @@ export default function RunsList() {
   const rerunQuick = useMutation({
     mutationFn: (suiteId: string) => launchRun(suiteId, false, 5),
     onSuccess: (data) => navigate(`/runs/${data.id}`),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: (runId: string) => deleteRun(runId),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["runs"] }),
   });
 
   if (isLoading) {
@@ -208,6 +214,20 @@ export default function RunsList() {
                           Re-run
                         </button>
                       </>
+                    )}
+                    {run.status !== "running" && (
+                      <button
+                        onClick={() => {
+                          if (window.confirm(`Delete run ${run.id.slice(0, 8)}… and all its results?`)) {
+                            deleteMut.mutate(run.id);
+                          }
+                        }}
+                        disabled={deleteMut.isPending}
+                        className="px-1.5 py-1.5 text-xs font-medium text-red-400 hover:text-red-600 hover:bg-red-50 rounded-lg disabled:opacity-50 transition-colors"
+                        title="Delete run"
+                      >
+                        ✕
+                      </button>
                     )}
                   </div>
                 </div>

@@ -438,6 +438,12 @@ export function cancelRun(runId: string): Promise<void> {
   return request(`/runs/${runId}`, { method: "DELETE" });
 }
 
+export function deleteRun(
+  runId: string
+): Promise<{ status: string; id: string }> {
+  return request(`/runs/${runId}/permanent`, { method: "DELETE" });
+}
+
 export async function activeRunCount(): Promise<number> {
   const runs = await listRuns();
   return runs.filter((r) => r.status === "running").length;

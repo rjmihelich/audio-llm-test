@@ -18,7 +18,7 @@ const navItems = [
   { to: "/tests", label: "Test Suites", icon: "\u{1F9EA}" },
   { to: "/runs", label: "Runs & Results", icon: "\u{1F3AF}" },
   { to: "/settings", label: "Settings", icon: "\u{2699}" },
-  { to: "/pipeline-studio", label: "Pipeline Studio", icon: "\u{1F527}", external: true },
+  { to: "/pipeline-studio", label: "Pipeline Studio", icon: "\u{1F527}", external: true, externalPath: "/pipeline-studio/" },
 ];
 
 export default function App() {
@@ -36,7 +36,7 @@ export default function App() {
       (item as { external?: boolean }).external ? (
         <a
           key={item.to}
-          href="http://localhost:5174"
+          href={(item as { externalPath?: string }).externalPath || item.to}
           target="_blank"
           rel="noopener noreferrer"
           onClick={onItemClick}

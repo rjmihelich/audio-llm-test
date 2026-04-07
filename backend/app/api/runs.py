@@ -6,12 +6,12 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import select, func
+from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.base import get_session
 from backend.app.models.test import TestCase, TestSuite
-from backend.app.models.run import TestRun
+from backend.app.models.run import TestResult, TestRun
 
 router = APIRouter()
 
@@ -172,3 +172,32 @@ async def cancel_run(
     await session.commit()
 
     return {"status": "cancelled", "id": run_id}
+
+
+@router.delete("/{run_id}/permanent")
+async def delete_run(
+    run_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Permanently delete a test run and all its results."""
+    run_uuid = uuid.UUID(run_id)
+
+    stmt = select(TestRun).where(TestRun.id == run_uuid)
+    result = await session.execute(stmt)
+    run = result.scalar_one_or_none()
+
+    if run is None:
+        raise HTTPException(404, "Run not found")
+
+    if run.status == "running":
+        raise HTTPException(400, "Cannot delete a running test. Cancel it first.")
+
+    # Delete results first
+    await session.execute(
+        delete(TestResult).where(TestResult.test_run_id == run_uuid)
+    )
+    # Delete the run
+    await session.delete(run)
+    await session.commit()
+
+    return {"status": "deleted", "id": run_id}
