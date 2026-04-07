@@ -54,8 +54,11 @@ def _get_system_metrics() -> SystemMetrics:
     mem = psutil.virtual_memory()
     disk = psutil.disk_usage("/")
 
-    # GPU info via nvidia-smi (if available)
+    # GPU info via nvidia-smi or sysfs (if available)
     gpu_info = _get_gpu_info()
+
+    # Enrich GPU info with Ollama VRAM data (more accurate for AMD)
+    gpu_info = _enrich_with_ollama(gpu_info)
 
     # System uptime
     uptime = time.time() - psutil.boot_time()
@@ -72,6 +75,55 @@ def _get_system_metrics() -> SystemMetrics:
         hostname=platform.node(),
         platform=f"{platform.system()} {platform.release()}",
     )
+
+
+def _enrich_with_ollama(gpu_info: list[dict] | None) -> list[dict] | None:
+    """Enrich GPU info with Ollama's VRAM usage (more accurate for AMD GPUs)."""
+    try:
+        from ..config import settings
+        import urllib.request
+
+        ollama_url = getattr(settings, "ollama_base_url", "http://localhost:11434")
+        req = urllib.request.Request(f"{ollama_url}/api/ps", method="GET")
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            data = json.loads(resp.read())
+
+        models = data.get("models", [])
+        if not models:
+            return gpu_info
+
+        # Sum up VRAM usage across loaded models
+        total_vram_used = sum(m.get("size_vram", 0) for m in models)
+        model_names = [m.get("name", "?") for m in models]
+        processor = "GPU" if total_vram_used > 0 else "CPU"
+
+        if gpu_info and len(gpu_info) > 0:
+            gpu = gpu_info[0]
+            # Use Ollama's VRAM as more accurate source
+            if total_vram_used > 0:
+                gpu["mem_used_gb"] = round(total_vram_used / (1024 ** 3), 2)
+                if gpu.get("mem_total_gb") and gpu["mem_total_gb"] > 0:
+                    gpu["mem_percent"] = round(
+                        (total_vram_used / (1024 ** 3)) / gpu["mem_total_gb"] * 100, 1
+                    )
+                gpu["ollama_models"] = model_names
+                gpu["processor"] = processor
+        elif total_vram_used > 0:
+            # No GPU detected by sysfs but Ollama is using VRAM
+            gpu_info = [{
+                "name": f"GPU (via Ollama)",
+                "util_percent": None,
+                "mem_used_gb": round(total_vram_used / (1024 ** 3), 2),
+                "mem_total_gb": None,
+                "mem_percent": None,
+                "temperature_c": None,
+                "ollama_models": model_names,
+                "processor": processor,
+            }]
+
+        return gpu_info
+    except Exception:
+        return gpu_info
 
 
 def _get_gpu_info() -> list[dict] | None:

@@ -364,24 +364,49 @@ export default function RunMonitor() {
                 <span>{sys.ram_used_gb}GB / {sys.ram_total_gb}GB</span>
                 <span>{sys.cpu_count} cores</span>
               </div>
-              {sys.gpu?.map((g, i) => (
-                <div key={i}>
-                  <div className="flex items-center justify-between text-[10px] text-gray-500 mt-1">
-                    <span className="truncate">{g.name}</span>
-                    {g.temperature_c != null && (
-                      <span className={g.temperature_c > 85 ? "text-red-400" : g.temperature_c > 70 ? "text-amber-400" : "text-green-400"}>
-                        {g.temperature_c}C
+              {sys.gpu?.map((g: Record<string, unknown>, i: number) => {
+                const name = String(g.name ?? "GPU");
+                const temp = g.temperature_c as number | null;
+                const utilPct = g.util_percent as number | null;
+                const memPct = g.mem_percent as number | null;
+                const memUsed = g.mem_used_gb as number | null;
+                const memTotal = g.mem_total_gb as number | null;
+                const ollamaModels = g.ollama_models as string[] | undefined;
+                const processor = g.processor as string | undefined;
+                return (
+                  <div key={i} className="mt-1">
+                    <div className="flex items-center justify-between text-[10px] text-gray-500">
+                      <span className="truncate">{name}</span>
+                      <span className="flex items-center gap-2">
+                        {processor && (
+                          <span className={`font-semibold ${processor === "GPU" ? "text-green-400" : "text-amber-400"}`}>
+                            {processor}
+                          </span>
+                        )}
+                        {temp != null && (
+                          <span className={temp > 85 ? "text-red-400" : temp > 70 ? "text-amber-400" : "text-green-400"}>
+                            {temp}°C
+                          </span>
+                        )}
                       </span>
+                    </div>
+                    {utilPct != null && utilPct > 0 && (
+                      <MeterBar value={utilPct} max={100} color={utilPct > 90 ? "bg-red-500" : "bg-purple-500"} label="GPU" />
+                    )}
+                    {memPct != null && (
+                      <MeterBar value={memPct} max={100} color="bg-purple-400" label="VRAM" />
+                    )}
+                    {memUsed != null && memTotal != null && (
+                      <div className="flex items-center justify-between text-[10px] text-gray-500">
+                        <span>{memUsed}GB / {memTotal}GB</span>
+                        {ollamaModels && ollamaModels.length > 0 && (
+                          <span className="text-purple-400 truncate ml-2">{ollamaModels.join(", ")}</span>
+                        )}
+                      </div>
                     )}
                   </div>
-                  {g.util_percent != null && (
-                    <MeterBar value={g.util_percent} max={100} color={g.util_percent > 90 ? "bg-red-500" : "bg-purple-500"} label="GPU" />
-                  )}
-                  {g.mem_percent != null && (
-                    <MeterBar value={g.mem_percent} max={100} color="bg-purple-400" label="VRAM" />
-                  )}
-                </div>
-              ))}
+                );
+              })}
               {sys.disk_percent != null && (
                 <MeterBar value={sys.disk_percent} max={100} color={sys.disk_percent > 90 ? "bg-red-500" : "bg-gray-500"} label="Disk" />
               )}
