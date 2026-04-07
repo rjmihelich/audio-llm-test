@@ -75,8 +75,16 @@ services:
       VITE_API_TARGET: http://backend:8000
     volumes:
       - ./frontend/src:/app/src
+      - ./frontend/vite.config.ts:/app/vite.config.ts
     depends_on:
       - backend
+    networks:
+      - default
+      - web
 
 volumes:
   pgdata:
+
+networks:
+  web:
+    external: true

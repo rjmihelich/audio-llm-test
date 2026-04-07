@@ -7,6 +7,7 @@ const apiTarget = process.env.VITE_API_TARGET || "http://localhost:8000";
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
+    allowedHosts: ["llmtest.ryanmihelich.com"],
     proxy: {
       "/api/speech/generate-wavs/stream": {
         target: apiTarget,
