@@ -25,7 +25,7 @@ class OllamaBackend:
         self._rate_limit = rate_limit or RateLimitConfig(
             requests_per_minute=1000,  # Local, effectively unlimited
             tokens_per_minute=1_000_000,
-            max_concurrent=4,  # Limited by GPU memory
+            max_concurrent=8,  # Match OLLAMA_NUM_PARALLEL for full GPU utilization
         )
 
     @property

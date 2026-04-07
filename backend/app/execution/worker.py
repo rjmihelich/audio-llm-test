@@ -458,13 +458,14 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                 }))
 
             # 10. Create and run scheduler
-            # Use lower concurrency when running local inference
+            # Allow higher concurrency for local inference to keep GPU saturated.
+            # Ollama with OLLAMA_NUM_PARALLEL can handle multiple requests in flight.
             has_local_backend = any(
                 k.startswith("ollama") for k in backends
             )
             max_workers = min(
                 settings.max_concurrent_workers,
-                2 if has_local_backend else settings.max_concurrent_workers,
+                8 if has_local_backend else settings.max_concurrent_workers,
             )
 
             scheduler = TestScheduler(
