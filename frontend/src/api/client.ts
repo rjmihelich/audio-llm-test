@@ -65,6 +65,8 @@ export interface StatsResponse {
   accuracy_by_backend: Array<Record<string, unknown>> | null;
   backend_comparison: Array<Record<string, unknown>> | null;
   parameter_effects: Record<string, unknown> | null;
+  mean_wer: number | null;
+  median_latency_ms: number | null;
 }
 
 export interface HeatmapResponse {
@@ -92,6 +94,10 @@ export interface ResultResponse {
   eval_score: number | null;
   eval_passed: boolean | null;
   evaluator_type: string | null;
+  wer: number | null;
+  asr_latency_ms: number | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
   total_latency_ms: number | null;
   error: string | null;
   error_stage: string | null;
@@ -528,6 +534,9 @@ export interface DashboardResponse {
   accuracy_by_voice_provider?: Array<Record<string, unknown>>;
   accuracy_by_corpus_category?: Array<Record<string, unknown>>;
   accuracy_by_voice_gender?: Array<Record<string, unknown>>;
+  mean_wer: number | null;
+  wer_by_snr: Array<Record<string, unknown>> | null;
+  wer_by_backend: Array<Record<string, unknown>> | null;
 }
 
 export interface AnalyticsFilters {

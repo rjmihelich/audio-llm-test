@@ -237,6 +237,17 @@ function ResultsTab({ results }: { results: ResultResponse[] }) {
             </p>
           </div>
           <div>
+            <p className="text-gray-500 text-xs">Mean WER</p>
+            <p className="font-medium text-gray-900">
+              {(() => {
+                const werValues = results.filter((r) => r.wer != null).map((r) => r.wer as number);
+                return werValues.length > 0
+                  ? `${(werValues.reduce((a, b) => a + b, 0) / werValues.length * 100).toFixed(1)}%`
+                  : "--";
+              })()}
+            </p>
+          </div>
+          <div>
             <p className="text-gray-500 text-xs">Evaluator</p>
             <p className="font-medium text-gray-900">
               {[...new Set(results.map((r) => r.evaluator_type).filter(Boolean))].join(", ") || "--"}
@@ -448,6 +459,18 @@ function ResultsTab({ results }: { results: ResultResponse[] }) {
                             {r.total_latency_ms != null ? `${r.total_latency_ms.toFixed(0)}ms` : "--"}
                           </p>
                         </div>
+                        {r.wer != null && (
+                          <div className="bg-gray-50 rounded-lg px-3 py-2">
+                            <p className="text-[10px] text-gray-400">WER</p>
+                            <p className="font-medium text-gray-900">{(r.wer * 100).toFixed(1)}%</p>
+                          </div>
+                        )}
+                        {r.input_tokens != null && (
+                          <div className="bg-gray-50 rounded-lg px-3 py-2">
+                            <p className="text-[10px] text-gray-400">Tokens In/Out</p>
+                            <p className="font-medium text-gray-900">{r.input_tokens}/{r.output_tokens ?? "--"}</p>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </div>

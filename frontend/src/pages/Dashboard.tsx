@@ -465,6 +465,54 @@ function AIInsightsPanel() {
   );
 }
 
+// -- WER trend chart --
+function WERTrend({ data }: { data: Array<Record<string, unknown>> }) {
+  const chartData = data
+    .filter((d) => d.mean_wer != null)
+    .map((d) => ({
+      run: String(d.run_id),
+      meanWER: Math.round(Number(d.mean_wer) * 100 * 10) / 10,
+    }));
+  if (!chartData.length) return null;
+  return (
+    <ChartCard title="WER Trend" subtitle="Mean Word Error Rate per run (ASR pipeline only)">
+      <ResponsiveContainer width="100%" height={220}>
+        <LineChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis dataKey="run" tick={{ fontSize: 11 }} />
+          <YAxis tickFormatter={(v) => `${v}%`} tick={{ fontSize: 12 }} />
+          <Tooltip formatter={(val: number) => [`${val}%`, "Mean WER"]} />
+          <Line type="monotone" dataKey="meanWER" stroke="#ef4444" strokeWidth={2} dot={{ r: 4 }} name="Mean WER" />
+        </LineChart>
+      </ResponsiveContainer>
+    </ChartCard>
+  );
+}
+
+// -- Task completion rate chart --
+function CompletionRate({ data }: { data: Array<Record<string, unknown>> }) {
+  const chartData = data
+    .filter((d) => d.completion_rate != null)
+    .map((d) => ({
+      run: String(d.run_id),
+      completionRate: Math.round(Number(d.completion_rate) * 100),
+    }));
+  if (!chartData.length) return null;
+  return (
+    <ChartCard title="Task Completion Rate" subtitle="Percentage of test cases that executed per run">
+      <ResponsiveContainer width="100%" height={220}>
+        <BarChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+          <XAxis dataKey="run" tick={{ fontSize: 11 }} />
+          <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} tick={{ fontSize: 12 }} />
+          <Tooltip formatter={(val: number) => [`${val}%`, "Completion"]} />
+          <Bar dataKey="completionRate" fill="#10b981" radius={[4, 4, 0, 0]} name="Completion Rate" />
+        </BarChart>
+      </ResponsiveContainer>
+    </ChartCard>
+  );
+}
+
 // ============================================================================
 // Main Dashboard
 // ============================================================================
@@ -652,6 +700,14 @@ export default function Dashboard() {
           {d.run_history && d.run_history.length > 1 && (
             <div className="grid grid-cols-1 gap-4">
               <RunHistory data={d.run_history} />
+            </div>
+          )}
+
+          {/* Row 6: WER trend + Completion rate */}
+          {d.run_history && d.run_history.length > 1 && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <WERTrend data={d.run_history} />
+              <CompletionRate data={d.run_history} />
             </div>
           )}
 

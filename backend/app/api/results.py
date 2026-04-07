@@ -47,6 +47,10 @@ class ResultResponse(BaseModel):
     eval_score: float | None = None
     eval_passed: bool | None = None
     evaluator_type: str | None = None
+    wer: float | None = None
+    asr_latency_ms: float | None = None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
     total_latency_ms: float | None = None
     error: str | None = None
     error_stage: str | None = None
@@ -70,6 +74,8 @@ class StatsResponse(BaseModel):
     accuracy_by_backend: list[dict] | None = None
     backend_comparison: list[dict] | None = None
     parameter_effects: dict | None = None
+    mean_wer: float | None = None
+    median_latency_ms: float | None = None
 
 
 class HeatmapResponse(BaseModel):
@@ -111,10 +117,14 @@ async def _load_results_for_run(
             "expected_action": ce.expected_action if ce else None,
             "llm_response_text": tr.llm_response_text,
             "asr_transcript": tr.asr_transcript,
+            "wer": tr.wer,
+            "total_latency_ms": tr.total_latency_ms if tr.total_latency_ms is not None else tr.llm_latency_ms,
+            "asr_latency_ms": tr.asr_latency_ms,
+            "input_tokens": tr.input_tokens,
+            "output_tokens": tr.output_tokens,
             "eval_score": tr.evaluation_score,
             "eval_passed": tr.evaluation_passed,
             "evaluator_type": tr.evaluator_type,
-            "total_latency_ms": tr.llm_latency_ms,
             "error": getattr(tr, "error", None) or ((tr.evaluation_details_json or {}).get("error") if tr.evaluation_details_json else None),
             "error_stage": getattr(tr, "error_stage", None),
             "voice_provider": voice.provider if voice else None,
@@ -184,7 +194,11 @@ async def query_results(
             eval_score=tr.evaluation_score,
             eval_passed=tr.evaluation_passed,
             evaluator_type=tr.evaluator_type,
-            total_latency_ms=tr.llm_latency_ms,
+            wer=tr.wer,
+            total_latency_ms=tr.total_latency_ms if tr.total_latency_ms is not None else tr.llm_latency_ms,
+            asr_latency_ms=tr.asr_latency_ms,
+            input_tokens=tr.input_tokens,
+            output_tokens=tr.output_tokens,
             error=getattr(tr, "error", None) or ((tr.evaluation_details_json or {}).get("error") if tr.evaluation_details_json else None),
             error_stage=getattr(tr, "error_stage", None),
             voice_provider=voice.provider if voice else None,
@@ -218,6 +232,9 @@ class DashboardResponse(BaseModel):
     accuracy_by_voice_provider: list[dict] | None = None
     accuracy_by_corpus_category: list[dict] | None = None
     accuracy_by_voice_gender: list[dict] | None = None
+    mean_wer: float | None = None
+    wer_by_snr: list[dict] | None = None
+    wer_by_backend: list[dict] | None = None
 
 
 @router.get("/dashboard/aggregate", response_model=DashboardResponse)
@@ -261,6 +278,19 @@ async def get_dashboard_aggregate(
 
     # Summary
     summary = summary_statistics(df)
+
+    # WER aggregation
+    wer_by_snr_data = None
+    if "wer" in df.columns and df["wer"].notna().any() and "snr_db" in df.columns and df["snr_db"].nunique() > 1:
+        wer_snr = df.groupby("snr_db")["wer"].agg(["mean", "count"]).reset_index()
+        wer_snr.columns = ["group", "mean_wer", "count"]
+        wer_by_snr_data = wer_snr.to_dict("records")
+
+    wer_by_backend_data = None
+    if "wer" in df.columns and df["wer"].notna().any() and "llm_backend" in df.columns:
+        wer_back = df.groupby("llm_backend")["wer"].agg(["mean", "count"]).reset_index()
+        wer_back.columns = ["group", "mean_wer", "count"]
+        wer_by_backend_data = wer_back.to_dict("records")
 
     # Accuracy by SNR
     snr_acc = accuracy_by_group(df, "snr_db") if "snr_db" in df.columns and df["snr_db"].nunique() > 1 else pd.DataFrame()
@@ -340,6 +370,8 @@ async def get_dashboard_aggregate(
                 "pass_rate": float(run_df["eval_passed"].mean()),
                 "mean_score": float(run_df["eval_score"].mean()) if "eval_score" in run_df.columns else None,
                 "mean_latency_ms": float(run_df["total_latency_ms"].mean()) if "total_latency_ms" in run_df.columns and run_df["total_latency_ms"].notna().any() else None,
+                "mean_wer": float(run_df["wer"].mean()) if "wer" in run_df.columns and run_df["wer"].notna().any() else None,
+                "completion_rate": float(run.completed_cases / run.total_cases) if run.total_cases > 0 else None,
             })
 
     return DashboardResponse(
@@ -360,6 +392,9 @@ async def get_dashboard_aggregate(
         accuracy_by_voice_provider=voice_provider_acc.to_dict("records") if not voice_provider_acc.empty else None,
         accuracy_by_corpus_category=corpus_category_acc.to_dict("records") if not corpus_category_acc.empty else None,
         accuracy_by_voice_gender=voice_gender_acc.to_dict("records") if not voice_gender_acc.empty else None,
+        mean_wer=summary.get("mean_wer"),
+        wer_by_snr=wer_by_snr_data,
+        wer_by_backend=wer_by_backend_data,
     )
 
 
@@ -421,6 +456,8 @@ async def get_run_stats(
         accuracy_by_backend=accuracy_by_backend,
         backend_comparison=backend_comparison,
         parameter_effects=param_effects,
+        mean_wer=summary.get("mean_wer"),
+        median_latency_ms=summary.get("median_latency_ms"),
     )
 
 

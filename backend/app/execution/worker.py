@@ -11,7 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from arq.connections import RedisSettings, create_pool
-from sqlalchemy import select
+from sqlalchemy import select, text as sa_text, func
 
 from ..config import settings
 from ..models.base import async_session
@@ -27,6 +27,7 @@ from ..llm.ollama import OllamaBackend
 from ..llm.whisper import WhisperAPIBackend, WhisperLocalBackend
 from ..llm.deepgram_stt import DeepgramSTTBackend
 from ..evaluation.command_match import CommandMatchEvaluator
+from ..evaluation.metrics import word_error_rate
 from ..evaluation.llm_judge import LLMJudgeEvaluator
 from ..speech.tts_openai import OpenAITTSProvider
 try:
@@ -361,18 +362,38 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
             _result_times: list[float] = []  # Track timestamps for rate calculation
 
             async def on_result_callback(record: TestResultRecord):
-                async with async_session() as result_session:
-                    pr = record.pipeline_result
-                    er = record.evaluation_result
-                    has_error = record.is_error
-                    backend_key = case_backend_map.get(record.test_case_id, "")
+                pr = record.pipeline_result
+                er = record.evaluation_result
+                has_error = record.is_error
+                backend_key = case_backend_map.get(record.test_case_id, "")
 
+                # Find config for this test case (needed for WER)
+                tc_cfg = next(
+                    (c for c in test_case_configs if c.id == record.test_case_id), None
+                )
+
+                # Compute WER for ASR pipeline cases
+                wer_score = None
+                if pr.transcription and pr.transcription.text and tc_cfg and tc_cfg.original_text:
+                    try:
+                        wer_score = word_error_rate(tc_cfg.original_text, pr.transcription.text)
+                    except Exception:
+                        pass
+
+                is_fail = int(has_error or (er is not None and not er.passed))
+
+                async with async_session() as result_session:
                     test_result = TestResult(
                         test_run_id=run_uuid,
                         test_case_id=uuid.UUID(record.test_case_id),
                         llm_response_text=pr.llm_response.text if pr.llm_response else None,
                         llm_latency_ms=pr.llm_response.latency_ms if pr.llm_response else None,
                         asr_transcript=pr.transcription.text if pr.transcription else None,
+                        wer=wer_score,
+                        total_latency_ms=pr.total_latency_ms if pr.total_latency_ms else None,
+                        asr_latency_ms=pr.transcription.latency_ms if pr.transcription else None,
+                        input_tokens=pr.llm_response.input_tokens if pr.llm_response else None,
+                        output_tokens=pr.llm_response.output_tokens if pr.llm_response else None,
                         evaluation_score=er.score if er else (0.0 if has_error else None),
                         evaluation_passed=er.passed if er else (False if has_error else None),
                         evaluation_details_json=er.details if er else None,
@@ -382,16 +403,17 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                     )
                     result_session.add(test_result)
 
-                    # Update TestRun counters
-                    tr = await result_session.get(TestRun, run_uuid)
-                    if tr:
-                        tr.completed_cases += 1
-                        if has_error:
-                            tr.failed_cases += 1
-                        elif er and not er.passed:
-                            tr.failed_cases += 1
-                        tr.progress_pct = (tr.completed_cases / tr.total_cases * 100.0) if tr.total_cases > 0 else 0.0
-
+                    # Atomic increment to avoid race condition with concurrent workers
+                    await result_session.execute(
+                        sa_text(
+                            "UPDATE test_runs SET "
+                            "completed_cases = completed_cases + 1, "
+                            "failed_cases = failed_cases + :is_fail, "
+                            "progress_pct = (completed_cases + 1) * 100.0 / GREATEST(total_cases, 1) "
+                            "WHERE id = :run_id"
+                        ),
+                        {"is_fail": is_fail, "run_id": str(run_uuid)},
+                    )
                     await result_session.commit()
 
                 # Track rate
@@ -403,15 +425,7 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                     _result_times.pop(0)
                 cases_per_min = len(_result_times)  # count in last 60s = per min
 
-                # Find the test case config for this result
-                tc_cfg = None
-                for cfg in test_case_configs:
-                    if cfg.id == record.test_case_id:
-                        tc_cfg = cfg
-                        break
-
                 # Publish activity to Redis
-                completed_so_far = len(_result_times) + (test_run.completed_cases if test_run else 0)
                 await publish_activity(run_id, {
                     "status": "processing",
                     "current_case": {
@@ -488,10 +502,21 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
 
             await scheduler.run(test_case_configs, completed_ids=completed_hashes)
 
-            # 11. Update TestRun status to completed
+            # 11. Update TestRun to completed — recount from DB to fix any race condition
+            actual_completed = await session.scalar(
+                select(func.count(TestResult.id)).where(TestResult.test_run_id == run_uuid)
+            )
+            actual_failed = await session.scalar(
+                select(func.count(TestResult.id)).where(
+                    TestResult.test_run_id == run_uuid,
+                    TestResult.evaluation_passed == False,
+                )
+            )
             await session.refresh(test_run)
             test_run.status = "completed"
             test_run.completed_at = datetime.utcnow()
+            test_run.completed_cases = actual_completed or 0
+            test_run.failed_cases = actual_failed or 0
             test_run.progress_pct = (
                 (test_run.completed_cases / test_run.total_cases * 100.0)
                 if test_run.total_cases > 0 else 0.0

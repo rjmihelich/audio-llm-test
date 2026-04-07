@@ -195,12 +195,14 @@ def parameter_effects_anova(
 
 def summary_statistics(df: pd.DataFrame) -> dict:
     """Compute overall summary statistics for a results DataFrame."""
-    return {
+    result = {
         "total_tests": len(df),
         "completed": df["eval_score"].notna().sum(),
         "errors": df["error"].notna().sum(),
         "overall_pass_rate": float(df["eval_passed"].mean()) if "eval_passed" in df else None,
         "overall_mean_score": float(df["eval_score"].mean()) if "eval_score" in df else None,
-        "mean_latency_ms": float(df["total_latency_ms"].mean()) if "total_latency_ms" in df else None,
-        "median_latency_ms": float(df["total_latency_ms"].median()) if "total_latency_ms" in df else None,
+        "mean_latency_ms": float(df["total_latency_ms"].mean()) if "total_latency_ms" in df and df["total_latency_ms"].notna().any() else None,
+        "median_latency_ms": float(df["total_latency_ms"].median()) if "total_latency_ms" in df and df["total_latency_ms"].notna().any() else None,
+        "mean_wer": float(df["wer"].mean()) if "wer" in df.columns and df["wer"].notna().any() else None,
     }
+    return result
