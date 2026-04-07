@@ -133,11 +133,76 @@ def _get_gpu_info() -> list[dict] | None:
     except Exception:
         pass
 
+    # AMD GPU via rocm-smi
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["rocm-smi", "--showuse", "--showmeminfo", "vram", "--showtemp", "--csv"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            # rocm-smi CSV output can be tricky, fall back to sysfs
+            raise ValueError("use sysfs")
+    except Exception:
+        pass
+
+    # AMD GPU via sysfs (works inside Docker too if /sys is mounted)
+    try:
+        import glob as _glob
+        cards = sorted(_glob.glob("/sys/class/drm/card[0-9]*/device/gpu_busy_percent"))
+        if cards:
+            gpus = []
+            for busy_path in cards:
+                dev_dir = os.path.dirname(busy_path)
+                card_dir = os.path.dirname(dev_dir)
+
+                def _read(path: str) -> str | None:
+                    try:
+                        with open(path) as f:
+                            return f.read().strip()
+                    except Exception:
+                        return None
+
+                # GPU name
+                name_raw = _read(os.path.join(dev_dir, "product_name"))
+                if not name_raw:
+                    # Try PCI device name
+                    vendor = _read(os.path.join(dev_dir, "vendor"))
+                    device = _read(os.path.join(dev_dir, "device"))
+                    name_raw = f"AMD GPU ({vendor}:{device})" if vendor else "AMD GPU"
+
+                util = _read(busy_path)
+                vram_total = _read(os.path.join(dev_dir, "mem_info_vram_total"))
+                vram_used = _read(os.path.join(dev_dir, "mem_info_vram_used"))
+
+                # Temperature from hwmon
+                temp = None
+                hwmon_temps = _glob.glob(os.path.join(dev_dir, "hwmon", "hwmon*", "temp1_input"))
+                if hwmon_temps:
+                    temp_raw = _read(hwmon_temps[0])
+                    if temp_raw:
+                        temp = int(temp_raw) // 1000  # millidegrees to degrees
+
+                mem_used_gb = round(int(vram_used) / (1024 ** 3), 2) if vram_used else None
+                mem_total_gb = round(int(vram_total) / (1024 ** 3), 2) if vram_total else None
+                mem_pct = round(int(vram_used) / int(vram_total) * 100, 1) if (vram_used and vram_total and int(vram_total) > 0) else None
+
+                gpus.append({
+                    "name": name_raw,
+                    "util_percent": int(util) if util else None,
+                    "mem_used_gb": mem_used_gb,
+                    "mem_total_gb": mem_total_gb,
+                    "mem_percent": mem_pct,
+                    "temperature_c": temp,
+                })
+            return gpus if gpus else None
+    except Exception:
+        pass
+
     # macOS: check for Apple Silicon GPU (unified memory)
     if platform.system() == "Darwin":
         try:
             import subprocess
-            # Apple Silicon has unified memory - report as GPU
             result = subprocess.run(
                 ["sysctl", "-n", "hw.memsize"],
                 capture_output=True, text=True, timeout=5,
