@@ -1352,16 +1352,22 @@ async def import_slurp(
     from pathlib import Path
 
     base = Path(settings.audio_storage_path).resolve().parent  # storage/
+    audio_base = Path(settings.audio_storage_path).resolve()  # storage/audio/
     search_dirs = [
-        base / "audio" / "slurp_real",
-        base / "audio" / "slurp",
+        audio_base / "slurp" / "audio" / "slurp_real",  # storage/audio/slurp/audio/slurp_real
+        audio_base / "slurp" / "audio",
+        audio_base / "slurp_real",
+        audio_base / "slurp",
+        base / "slurp" / "audio" / "slurp_real",
         base / "slurp" / "audio",
         base / "slurp",
     ]
 
     # Also check for annotation files
     annotation_dirs = [
+        audio_base / "slurp" / "annotations",
         base / "slurp" / "annotations",
+        audio_base / "slurp",
         base / "slurp",
     ]
 
