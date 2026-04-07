@@ -5,9 +5,11 @@ import {
   updateSettings,
   fetchKeyStatus,
   importSlurp,
+  testLLM,
   type SettingsResponse,
   type KeyStatusResponse,
   type SlurpImportResponse,
+  type TestLLMResponse,
 } from "../api/client";
 
 interface KeyField {
@@ -172,6 +174,91 @@ function QualityBadge({ quality }: { quality: string }) {
     >
       {quality}
     </span>
+  );
+}
+
+const TEST_BACKENDS = [
+  { key: "ollama:mistral", label: "Ollama - Mistral" },
+  { key: "ollama:llama2", label: "Ollama - Llama 2" },
+  { key: "ollama:llama3", label: "Ollama - Llama 3" },
+  { key: "openai:gpt-4o-mini", label: "OpenAI - GPT-4o Mini" },
+  { key: "openai:gpt-4o-audio-preview", label: "OpenAI - GPT-4o Audio" },
+  { key: "openai-realtime:gpt-4o-realtime-preview", label: "OpenAI - Realtime API" },
+  { key: "anthropic:claude-haiku-4-5-20251001", label: "Anthropic - Claude Haiku" },
+  { key: "gemini:gemini-2.0-flash", label: "Google - Gemini 2.0 Flash" },
+];
+
+function TestLLMPanel() {
+  const [selectedBackend, setSelectedBackend] = useState(TEST_BACKENDS[0].key);
+  const [testing, setTesting] = useState(false);
+  const [result, setResult] = useState<TestLLMResponse | null>(null);
+
+  const handleTest = async () => {
+    setTesting(true);
+    setResult(null);
+    try {
+      const res = await testLLM(selectedBackend);
+      setResult(res);
+    } catch (e: unknown) {
+      setResult({ success: false, response: null, error: e instanceof Error ? e.message : "Failed", latency_ms: null });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <div>
+      <div className="flex flex-col sm:flex-row gap-3">
+        <select
+          value={selectedBackend}
+          onChange={(e) => { setSelectedBackend(e.target.value); setResult(null); }}
+          className="border border-gray-200 rounded-lg px-3 py-2 text-sm flex-1"
+        >
+          {TEST_BACKENDS.map((b) => (
+            <option key={b.key} value={b.key}>{b.label}</option>
+          ))}
+        </select>
+        <button
+          onClick={handleTest}
+          disabled={testing}
+          className={`px-4 py-2 text-sm font-medium rounded-lg transition-colors whitespace-nowrap ${
+            testing
+              ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+              : "bg-blue-600 text-white hover:bg-blue-700"
+          }`}
+        >
+          {testing ? "Testing..." : "Test Connection"}
+        </button>
+      </div>
+      {result && (
+        <div className={`mt-3 p-3 rounded-lg text-sm border ${
+          result.success
+            ? "bg-green-50 border-green-200"
+            : "bg-red-50 border-red-200"
+        }`}>
+          {result.success ? (
+            <>
+              <p className="font-medium text-green-800">
+                Connected ({result.latency_ms}ms)
+              </p>
+              <p className="text-green-700 mt-1 text-xs font-mono bg-green-100 rounded p-2 mt-2">
+                {result.response}
+              </p>
+            </>
+          ) : (
+            <p className="font-medium text-red-700">{result.error}</p>
+          )}
+        </div>
+      )}
+      {selectedBackend.startsWith("openai-realtime") && (
+        <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800">
+          <p className="font-semibold mb-1">OpenAI Realtime API</p>
+          <p>Uses WebSocket streaming for low-latency audio-in/audio-out. In test suites, select
+          "OpenAI Realtime API" as a backend with the "Audio → LLM (direct)" pipeline.
+          Requires an OpenAI API key with realtime access.</p>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -594,6 +681,15 @@ export default function Settings() {
             </p>
           </div>
         </div>
+      </div>
+
+      {/* Test LLM Connection */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 sm:p-6 mt-6">
+        <h2 className="text-lg font-semibold text-gray-900 mb-1">Test LLM Connection</h2>
+        <p className="text-sm text-gray-500 mb-4">
+          Send a quick test prompt to verify your LLM backend is reachable and responding.
+        </p>
+        <TestLLMPanel />
       </div>
 
       {/* SLURP Dataset Import */}

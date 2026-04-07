@@ -163,7 +163,7 @@ function SuiteRow({
   const navigate = useNavigate();
 
   const launch = useMutation({
-    mutationFn: () => launchRun(suite.id),
+    mutationFn: (sampleSize?: number) => launchRun(suite.id, false, sampleSize),
     onSuccess: (data) => navigate(`/runs/${data.id}`),
   });
 
@@ -198,13 +198,23 @@ function SuiteRow({
         <td className="px-6 py-3">
           <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
             {suite.status === "ready" && (
-              <button
-                onClick={() => launch.mutate()}
-                disabled={launch.isPending}
-                className="px-2.5 py-1 text-xs font-medium text-white bg-green-600 rounded hover:bg-green-700 disabled:opacity-50 transition-colors"
-              >
-                {launch.isPending ? "..." : "Run"}
-              </button>
+              <>
+                <button
+                  onClick={() => launch.mutate(5)}
+                  disabled={launch.isPending}
+                  className="px-2.5 py-1 text-xs font-medium text-amber-700 bg-amber-100 rounded hover:bg-amber-200 disabled:opacity-50 transition-colors"
+                  title="Run 5 random cases to verify setup"
+                >
+                  {launch.isPending ? "..." : "Quick Test"}
+                </button>
+                <button
+                  onClick={() => launch.mutate(undefined)}
+                  disabled={launch.isPending}
+                  className="px-2.5 py-1 text-xs font-medium text-white bg-green-600 rounded hover:bg-green-700 disabled:opacity-50 transition-colors"
+                >
+                  {launch.isPending ? "..." : "Run All"}
+                </button>
+              </>
             )}
             <button
               onClick={() => {
@@ -248,13 +258,21 @@ function SuiteRow({
               </div>
             </div>
 
-            <div className="mt-4 flex items-center gap-3">
+            <div className="mt-4 flex flex-wrap items-center gap-3">
               <button
-                onClick={() => launch.mutate()}
+                onClick={() => launch.mutate(5)}
+                disabled={launch.isPending || suite.status !== "ready"}
+                className="px-4 py-2 text-sm font-medium text-amber-700 bg-amber-100 rounded-lg hover:bg-amber-200 disabled:opacity-50 transition-colors"
+                title="Run 5 random test cases to verify everything works"
+              >
+                {launch.isPending ? "..." : "Quick Test (5 cases)"}
+              </button>
+              <button
+                onClick={() => launch.mutate(undefined)}
                 disabled={launch.isPending || suite.status !== "ready"}
                 className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 transition-colors"
               >
-                {launch.isPending ? "Launching..." : "Launch Run"}
+                {launch.isPending ? "Launching..." : "Launch Full Run"}
               </button>
               {suite.status !== "ready" && (
                 <span className="text-xs text-gray-400">

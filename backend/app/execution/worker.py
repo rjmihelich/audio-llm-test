@@ -73,14 +73,15 @@ def _init_backend(backend_key: str):
         raise ValueError(f"Unknown LLM backend prefix: {prefix}")
 
 
-async def run_test_suite(ctx: dict, run_id: str):
+async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None):
     """Background task: execute all test cases in a test run.
 
     This is the main entry point called by the arq worker.
     It loads the test suite configuration, creates the execution
     scheduler, and runs all test cases with progress reporting.
+    If sample_size is set, only a random subset of cases is executed.
     """
-    logger.info(f"Starting test run: {run_id}")
+    logger.info(f"Starting test run: {run_id} (sample_size={sample_size})")
 
     async with async_session() as session:
         try:
@@ -102,6 +103,12 @@ async def run_test_suite(ctx: dict, run_id: str):
                 select(TestCase).where(TestCase.test_suite_id == test_suite.id)
             )
             test_cases = list(tc_result.scalars().all())
+
+            # Random subset if sample_size specified
+            if sample_size and sample_size < len(test_cases):
+                import random
+                test_cases = random.sample(test_cases, sample_size)
+                logger.info(f"Quick test: selected {sample_size} random cases from {len(test_cases) + sample_size - sample_size}")
 
             # Eagerly load speech_sample and corpus_entry for each test case
             for tc in test_cases:

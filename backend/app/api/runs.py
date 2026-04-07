@@ -19,6 +19,7 @@ router = APIRouter()
 class LaunchRunRequest(BaseModel):
     test_suite_id: str
     resume: bool = False  # If True, skip already-completed test cases
+    sample_size: int | None = None  # If set, pick N random cases for a quick test
 
 
 class RunResponse(BaseModel):
@@ -81,10 +82,15 @@ async def launch_run(
     if total_cases == 0:
         raise HTTPException(400, "Test suite has no test cases")
 
+    # If sample_size is set, we'll only run a random subset
+    run_cases = total_cases
+    if request.sample_size and request.sample_size < total_cases:
+        run_cases = request.sample_size
+
     run = TestRun(
         test_suite_id=suite_uuid,
         status="pending",
-        total_cases=total_cases,
+        total_cases=run_cases,
         completed_cases=0,
         failed_cases=0,
         progress_pct=0.0,
@@ -102,7 +108,7 @@ async def launch_run(
             create_pool(RedisSettings.from_dsn(app_settings.redis_url)),
             timeout=5.0,
         )
-        await redis.enqueue_job("run_test_suite", str(run.id))
+        await redis.enqueue_job("run_test_suite", str(run.id), request.sample_size)
         await redis.close()
     except Exception as e:
         import logging

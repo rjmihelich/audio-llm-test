@@ -213,3 +213,82 @@ async def update_settings(req: UpdateKeysRequest):
         _persist_to_env(updates)
 
     return {"status": "updated", "keys_changed": list(updates.keys())}
+
+
+# ---------------------------------------------------------------------------
+# LLM Connection Test
+# ---------------------------------------------------------------------------
+
+class TestLLMRequest(BaseModel):
+    backend: str  # e.g. "ollama:mistral", "openai:gpt-4o-mini"
+    prompt: str = "Say hello in one sentence."
+
+
+class TestLLMResponse(BaseModel):
+    success: bool
+    response: str | None = None
+    error: str | None = None
+    latency_ms: float | None = None
+
+
+@router.post("/test-llm", response_model=TestLLMResponse)
+async def test_llm(req: TestLLMRequest):
+    """Send a quick test prompt to an LLM backend to verify connectivity."""
+    import asyncio
+    import time
+
+    try:
+        prefix, _, model = req.backend.partition(":")
+
+        start = time.time()
+
+        if prefix == "ollama":
+            import httpx
+            url = f"{settings.ollama_base_url}/api/generate"
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(url, json={
+                    "model": model or "mistral",
+                    "prompt": req.prompt,
+                    "stream": False,
+                })
+                resp.raise_for_status()
+                data = resp.json()
+                answer = data.get("response", "")
+
+        elif prefix == "openai":
+            from openai import AsyncOpenAI
+            client = AsyncOpenAI(api_key=settings.openai_api_key)
+            resp = await client.chat.completions.create(
+                model=model or "gpt-4o-mini",
+                messages=[{"role": "user", "content": req.prompt}],
+                max_tokens=100,
+            )
+            answer = resp.choices[0].message.content or ""
+
+        elif prefix == "anthropic":
+            from anthropic import AsyncAnthropic
+            client = AsyncAnthropic(api_key=settings.anthropic_api_key)
+            resp = await client.messages.create(
+                model=model or "claude-haiku-4-5-20251001",
+                max_tokens=100,
+                messages=[{"role": "user", "content": req.prompt}],
+            )
+            answer = resp.content[0].text if resp.content else ""
+
+        elif prefix == "gemini":
+            import google.generativeai as genai
+            genai.configure(api_key=settings.google_api_key)
+            gm = genai.GenerativeModel(model or "gemini-2.0-flash")
+            resp = await asyncio.to_thread(
+                lambda: gm.generate_content(req.prompt)
+            )
+            answer = resp.text or ""
+
+        else:
+            return TestLLMResponse(success=False, error=f"Unknown backend: {prefix}")
+
+        latency = (time.time() - start) * 1000
+        return TestLLMResponse(success=True, response=answer.strip(), latency_ms=round(latency, 1))
+
+    except Exception as e:
+        return TestLLMResponse(success=False, error=f"{type(e).__name__}: {e}")

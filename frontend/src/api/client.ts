@@ -394,11 +394,16 @@ export function deleteTestSuite(
 
 export function launchRun(
   suiteId: string,
-  resume = false
+  resume = false,
+  sampleSize?: number
 ): Promise<RunResponse> {
   return request("/runs", {
     method: "POST",
-    body: JSON.stringify({ test_suite_id: suiteId, resume }),
+    body: JSON.stringify({
+      test_suite_id: suiteId,
+      resume,
+      sample_size: sampleSize ?? null,
+    }),
   });
 }
 
@@ -549,6 +554,20 @@ export function updateSettings(
   return request("/settings", {
     method: "PATCH",
     body: JSON.stringify(updates),
+  });
+}
+
+export interface TestLLMResponse {
+  success: boolean;
+  response: string | null;
+  error: string | null;
+  latency_ms: number | null;
+}
+
+export function testLLM(backend: string, prompt = "Say hello in one sentence."): Promise<TestLLMResponse> {
+  return request("/settings/test-llm", {
+    method: "POST",
+    body: JSON.stringify({ backend, prompt }),
   });
 }
 
