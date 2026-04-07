@@ -10,6 +10,7 @@ import Results from "./pages/Results";
 import RunsList from "./pages/RunsList";
 import Settings from "./pages/Settings";
 import AudioBrowser from "./pages/AudioBrowser";
+import Comparison from "./pages/Comparison";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: "\u{1F4CA}" },
@@ -17,6 +18,7 @@ const navItems = [
   { to: "/browser", label: "Audio Browser", icon: "\u{1F50A}" },
   { to: "/tests", label: "Test Suites", icon: "\u{1F9EA}" },
   { to: "/runs", label: "Runs & Results", icon: "\u{1F3AF}" },
+  { to: "/compare", label: "Compare", icon: "\u{1F4C8}" },
   { to: "/settings", label: "Settings", icon: "\u{2699}" },
   { to: "/pipeline-studio", label: "Pipeline Studio", icon: "\u{1F527}", external: true, externalPath: "/pipeline-studio/" },
 ];
@@ -142,6 +144,7 @@ export default function App() {
           <Route path="/runs" element={<RunsList />} />
           <Route path="/runs/:id" element={<RunMonitor />} />
           <Route path="/results/:id" element={<Results />} />
+          <Route path="/compare" element={<Comparison />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>

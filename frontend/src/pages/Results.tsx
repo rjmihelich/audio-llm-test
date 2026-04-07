@@ -68,6 +68,8 @@ export default function Results() {
 
   const s = stats.data;
   const r = run.data;
+  const passedCount = (results.data ?? []).filter((r) => r.eval_passed === true).length;
+  const failedCount = (results.data ?? []).filter((r) => r.eval_passed === false).length;
 
   return (
     <div className="p-8 max-w-7xl mx-auto">
@@ -119,13 +121,19 @@ export default function Results() {
         />
         <StatsCard
           title="Passed"
-          value={
-            s && s.completed > 0
-              ? `${s.completed - s.errors}`
-              : "--"
+          value={results.data ? passedCount : "--"}
+          subtitle={
+            s?.completed != null && s?.total_tests != null
+              ? `${s.completed}/${s.total_tests} completed`
+              : undefined
           }
-          subtitle={`${s?.errors ?? 0} failed`}
-          trend="neutral"
+          trend={results.data && s?.total_tests ? (passedCount / s.total_tests >= 0.5 ? "up" : "down") : "neutral"}
+        />
+        <StatsCard
+          title="Failed"
+          value={results.data ? failedCount : "--"}
+          subtitle={s?.errors ? `${s.errors} errors` : undefined}
+          trend={results.data && failedCount > 0 ? "down" : "neutral"}
         />
         <StatsCard
           title="Pass Rate"
@@ -143,15 +151,6 @@ export default function Results() {
                   : "down"
               : "neutral"
           }
-        />
-        <StatsCard
-          title="Mean Score"
-          value={
-            s?.overall_mean_score != null
-              ? s.overall_mean_score.toFixed(2)
-              : "--"
-          }
-          trend="neutral"
         />
         <StatsCard
           title="Mean WER"

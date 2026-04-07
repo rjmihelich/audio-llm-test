@@ -242,6 +242,10 @@ class DashboardResponse(BaseModel):
     accuracy_by_voice_provider: list[dict] | None = None
     accuracy_by_corpus_category: list[dict] | None = None
     accuracy_by_voice_gender: list[dict] | None = None
+    accuracy_by_accent: list[dict] | None = None
+    backend_comparison: list[dict] | None = None
+    llm_noise_heatmap: dict | None = None
+    wer_by_backend_snr: list[dict] | None = None
 
 
 @router.get("/dashboard/aggregate", response_model=DashboardResponse)
@@ -370,6 +374,40 @@ async def get_dashboard_aggregate(
                 "mean_latency_ms": float(run_df["total_latency_ms"].mean()) if "total_latency_ms" in run_df.columns and run_df["total_latency_ms"].notna().any() else None,
             })
 
+    # Accuracy by voice accent
+    accent_acc = accuracy_by_group(df, "voice_accent") if "voice_accent" in df.columns and df["voice_accent"].notna().any() and df["voice_accent"].nunique() > 1 else pd.DataFrame()
+
+    # Pairwise backend comparison (McNemar + Wilcoxon)
+    comparison_df = pairwise_backend_comparison(df) if "llm_backend" in df.columns and df["llm_backend"].nunique() > 1 else pd.DataFrame()
+
+    # LLM × noise type pass-rate heatmap
+    llm_noise_heatmap = None
+    if "llm_backend" in df.columns and "noise_type" in df.columns:
+        if df["llm_backend"].nunique() > 1 and df["noise_type"].nunique() > 1:
+            pivot_ln = pivot_heatmap(df, "llm_backend", "noise_type", value_col="eval_passed")
+            llm_noise_heatmap = {
+                "row_labels": [str(x) for x in pivot_ln.index.tolist()],
+                "col_labels": [str(x) for x in pivot_ln.columns.tolist()],
+                "values": [
+                    [None if pd.isna(v) else float(v) for v in row]
+                    for row in pivot_ln.values.tolist()
+                ],
+                "row_name": "llm_backend",
+                "col_name": "noise_type",
+            }
+
+    # WER broken down by backend × SNR
+    wer_by_backend_snr = None
+    if "wer" in df.columns and df["wer"].notna().any() and "llm_backend" in df.columns and "snr_db" in df.columns:
+        wer_cross = (
+            df[df["wer"].notna()]
+            .groupby(["llm_backend", "snr_db"])["wer"]
+            .agg(["mean", "count"])
+            .reset_index()
+        )
+        wer_cross.columns = ["backend", "snr_db", "mean_wer", "count"]
+        wer_by_backend_snr = wer_cross.to_dict("records")
+
     return DashboardResponse(
         total_runs=len(completed_runs),
         total_cases=len(all_records),
@@ -391,6 +429,10 @@ async def get_dashboard_aggregate(
         accuracy_by_voice_provider=voice_provider_acc.to_dict("records") if not voice_provider_acc.empty else None,
         accuracy_by_corpus_category=corpus_category_acc.to_dict("records") if not corpus_category_acc.empty else None,
         accuracy_by_voice_gender=voice_gender_acc.to_dict("records") if not voice_gender_acc.empty else None,
+        accuracy_by_accent=accent_acc.to_dict("records") if not accent_acc.empty else None,
+        backend_comparison=comparison_df.to_dict("records") if not comparison_df.empty else None,
+        llm_noise_heatmap=llm_noise_heatmap,
+        wer_by_backend_snr=wer_by_backend_snr,
     )
 
 

@@ -541,6 +541,16 @@ export interface DashboardResponse {
   accuracy_by_voice_provider?: Array<Record<string, unknown>>;
   accuracy_by_corpus_category?: Array<Record<string, unknown>>;
   accuracy_by_voice_gender?: Array<Record<string, unknown>>;
+  accuracy_by_accent?: Array<Record<string, unknown>>;
+  backend_comparison?: Array<Record<string, unknown>>;
+  llm_noise_heatmap?: {
+    row_labels: string[];
+    col_labels: string[];
+    values: Array<Array<number | null>>;
+    row_name: string;
+    col_name: string;
+  };
+  wer_by_backend_snr?: Array<Record<string, unknown>>;
 }
 
 export interface AnalyticsFilters {
