@@ -79,8 +79,8 @@ export default function App() {
       {/* Desktop sidebar */}
       <aside className="hidden md:flex w-56 bg-slate-800 text-white flex-col shrink-0">
         <div className="px-5 py-4 border-b border-slate-700">
-          <h1 className="text-base font-bold tracking-tight">Audio LLM Test</h1>
-          <p className="text-[11px] text-slate-400 mt-0.5">Quality Evaluation Platform</p>
+          <h1 className="text-base font-bold tracking-tight">Voice Testing</h1>
+          <p className="text-[11px] text-slate-400 mt-0.5">Audio Quality & LLM Evaluation</p>
         </div>
         <nav className="flex-1 px-3 py-3 space-y-0.5 overflow-y-auto">
           {renderNavItems()}
@@ -93,7 +93,7 @@ export default function App() {
       {/* Mobile top bar */}
       <div className="fixed top-0 left-0 right-0 z-50 bg-slate-800 text-white shadow-lg md:hidden">
         <div className="flex items-center justify-between px-4 h-14">
-          <h1 className="text-lg font-bold tracking-tight">Audio LLM Test</h1>
+          <h1 className="text-lg font-bold tracking-tight">Voice Testing</h1>
           <button
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
             className="p-2 rounded-lg hover:bg-slate-700 transition-colors"
@@ -116,7 +116,7 @@ export default function App() {
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-[60] bg-slate-800 text-white pt-14 flex flex-col md:hidden">
           <div className="absolute top-0 left-0 right-0 h-14 flex items-center justify-between px-4">
-            <h1 className="text-lg font-bold tracking-tight">Audio LLM Test</h1>
+            <h1 className="text-lg font-bold tracking-tight">Voice Testing</h1>
             <button
               onClick={() => setMobileMenuOpen(false)}
               className="p-2 rounded-lg hover:bg-slate-700 transition-colors"
