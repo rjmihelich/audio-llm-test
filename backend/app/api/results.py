@@ -62,6 +62,7 @@ class ResultResponse(BaseModel):
     voice_language: str | None = None
     corpus_category: str | None = None
     corpus_language: str | None = None
+    has_degraded_audio: bool = False
     created_at: str | None = None
 
 
@@ -139,6 +140,7 @@ async def _load_results_for_run(
             "voice_language": voice.language if voice else None,
             "corpus_category": ce.category if ce else None,
             "corpus_language": ce.language if ce else None,
+            "has_degraded_audio": bool(getattr(tr, "degraded_audio_path", None)),
         })
     return records
 
@@ -214,6 +216,7 @@ async def query_results(
             voice_language=voice.language if voice else None,
             corpus_category=ce.category if ce else None,
             corpus_language=ce.language if ce else None,
+            has_degraded_audio=bool(getattr(tr, "degraded_audio_path", None)),
             created_at=tr.created_at.isoformat() if tr.created_at else None,
         )
         for tr, tc, ce, voice in rows
@@ -603,8 +606,23 @@ async def get_test_case_audio(
     # Determine file path based on type
     if type == "clean":
         file_path = Path(sample.file_path)
+    elif type == "degraded":
+        # First check if we saved the degraded audio in the result record
+        run_uuid = uuid.UUID(run_id)
+        tr_stmt = select(TestResult).where(
+            TestResult.test_run_id == run_uuid,
+            TestResult.test_case_id == case_uuid,
+        )
+        tr_result = await session.execute(tr_stmt)
+        test_result = tr_result.scalar_one_or_none()
+        if test_result and test_result.degraded_audio_path:
+            file_path = Path(test_result.degraded_audio_path)
+        else:
+            # Fallback: look for degraded audio alongside the clean sample
+            base_path = Path(sample.file_path)
+            file_path = base_path.parent / f"{base_path.stem}_{type}_{case_id}{base_path.suffix}"
     else:
-        # degraded/echo audio stored alongside the clean sample
+        # echo audio stored alongside the clean sample
         base_path = Path(sample.file_path)
         file_path = base_path.parent / f"{base_path.stem}_{type}_{case_id}{base_path.suffix}"
 

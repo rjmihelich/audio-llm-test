@@ -75,6 +75,7 @@ class TestResult(Base):
     evaluation_passed: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     evaluation_details_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     evaluator_type: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    degraded_audio_path: Mapped[str | None] = mapped_column(String(500), nullable=True, comment="Path to degraded (dirty) WAV for failed/interesting cases")
     error: Mapped[str | None] = mapped_column(Text, nullable=True, comment="Pipeline or evaluation error message")
     error_stage: Mapped[str | None] = mapped_column(String(50), nullable=True, comment="Stage where error occurred: audio_load, pipeline, evaluation, timeout")
 

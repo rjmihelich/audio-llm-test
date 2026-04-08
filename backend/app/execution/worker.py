@@ -382,6 +382,19 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                     except Exception:
                         pass
 
+                # Save degraded audio WAV for failed/low-score cases
+                degraded_audio_path = None
+                is_failed = has_error or (er and not er.passed)
+                if is_failed and pr.degraded_audio is not None:
+                    try:
+                        degraded_dir = Path(settings.audio_storage_path) / "degraded" / run_id
+                        degraded_dir.mkdir(parents=True, exist_ok=True)
+                        wav_path = degraded_dir / f"{record.test_case_id}.wav"
+                        save_audio(pr.degraded_audio, wav_path)
+                        degraded_audio_path = str(wav_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to save degraded audio for {record.test_case_id[:8]}: {e}")
+
                 async with async_session() as result_session:
                     test_result = TestResult(
                         test_run_id=run_uuid,
@@ -398,6 +411,7 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                         evaluation_passed=er.passed if er else (False if has_error else None),
                         evaluation_details_json=er.details if er else None,
                         evaluator_type=er.evaluator if er else None,
+                        degraded_audio_path=degraded_audio_path,
                         error=pr.error,
                         error_stage=record.error_stage,
                     )
