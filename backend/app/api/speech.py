@@ -1263,12 +1263,35 @@ async def browse_samples(
 
 @router.get("/samples/filters")
 async def sample_filters(session: AsyncSession = Depends(get_session)):
-    """Return distinct values for each filterable field (for populating dropdowns)."""
-    providers_q = select(distinct(Voice.provider))
-    genders_q = select(distinct(Voice.gender))
-    languages_q = select(distinct(Voice.language))
-    accents_q = select(distinct(Voice.accent)).where(Voice.accent.is_not(None))
-    categories_q = select(distinct(CorpusEntry.category))
+    """Return distinct values for each filterable field (for populating dropdowns).
+
+    Queries go through speech_samples joined to voices/corpus so filters
+    only show values that actually have samples.
+    """
+    from sqlalchemy.orm import joinedload  # noqa: F811
+
+    # Join through samples so we only get values present in sample data
+    providers_q = (
+        select(distinct(Voice.provider))
+        .join(SpeechSample, SpeechSample.voice_id == Voice.id)
+    )
+    genders_q = (
+        select(distinct(Voice.gender))
+        .join(SpeechSample, SpeechSample.voice_id == Voice.id)
+    )
+    languages_q = (
+        select(distinct(Voice.language))
+        .join(SpeechSample, SpeechSample.voice_id == Voice.id)
+    )
+    accents_q = (
+        select(distinct(Voice.accent))
+        .join(SpeechSample, SpeechSample.voice_id == Voice.id)
+        .where(Voice.accent.is_not(None))
+    )
+    categories_q = (
+        select(distinct(CorpusEntry.category))
+        .join(SpeechSample, SpeechSample.corpus_entry_id == CorpusEntry.id)
+    )
     statuses_q = select(distinct(SpeechSample.status))
 
     (
@@ -1289,7 +1312,7 @@ async def sample_filters(session: AsyncSession = Depends(get_session)):
 
     def _vals(result):
         return sorted(
-            v.value if hasattr(v, "value") else v
+            str(v.value) if hasattr(v, "value") else str(v)
             for (v,) in result.all()
             if v is not None
         )
