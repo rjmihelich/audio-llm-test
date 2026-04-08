@@ -1,4 +1,4 @@
-"""SNR-calibrated audio mixing."""
+"""Audio mixing with gain-based noise control."""
 
 from __future__ import annotations
 
@@ -36,12 +36,48 @@ def _soft_clip(samples: np.ndarray, threshold: float = 0.95) -> np.ndarray:
     return out
 
 
+def mix_with_gain(
+    speech: AudioBuffer,
+    noise: AudioBuffer,
+    noise_level_db: float = 0.0,
+) -> AudioBuffer:
+    """Mix noise into speech at the specified noise gain level.
+
+    noise_level_db is a gain in dB applied to the noise before summing.
+    0 dB = noise at its natural level (unit RMS for synthetic, recorded level for car files).
+    Negative = quieter noise. Positive = louder noise.
+
+    Args:
+        speech: Clean speech audio (reference signal).
+        noise: Noise audio (will be resampled and looped to match speech).
+        noise_level_db: Gain applied to noise in dB. 0 = natural level.
+    """
+    if speech.sample_rate != noise.sample_rate:
+        noise = noise.resample(speech.sample_rate)
+
+    # Ensure same length
+    noise_samples = noise.loop_to_length(speech.num_samples).samples
+
+    # Apply gain
+    gain_linear = 10 ** (noise_level_db / 20.0)
+    scaled_noise = noise_samples * gain_linear
+
+    mixed = speech.samples + scaled_noise
+    mixed = _soft_clip(mixed)
+
+    return AudioBuffer(samples=mixed, sample_rate=speech.sample_rate)
+
+
+# DEPRECATED: mix_at_snr is kept for backward compatibility with pipeline-studio.
+# New code should use mix_with_gain() instead.
 def mix_at_snr(
     speech: AudioBuffer,
     noise: AudioBuffer,
     snr_db: float | None,
 ) -> AudioBuffer:
-    """Mix noise into speech at the specified SNR.
+    """DEPRECATED: Use mix_with_gain() instead.
+
+    Mix noise into speech at the specified SNR.
 
     SNR = 20 * log10(rms_speech / rms_noise)
     => rms_noise_target = rms_speech / 10^(snr_db/20)

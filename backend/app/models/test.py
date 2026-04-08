@@ -62,7 +62,7 @@ class SweepConfig(Base):
     test_suite_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("test_suites.id"), nullable=False
     )
-    snr_db_values: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    noise_level_db_values: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     speech_level_db_values: Mapped[list] = mapped_column(
         JSON, nullable=False, default=lambda: [0.0],
         comment="Speech gain levels in dB. 0=original, negative=quieter/whisper, positive=louder/shout.",
@@ -100,6 +100,20 @@ class SweepConfig(Base):
         comment="Whether this sweep uses the telephony pipeline",
     )
 
+    # Far-end / 2-way conversation sweep dimensions (added in migration 008)
+    far_end_enabled: Mapped[bool] = mapped_column(
+        nullable=False, default=False,
+        comment="Enable 2-way conversation with uncorrelated far-end speech",
+    )
+    far_end_speech_level_db_values: Mapped[list | None] = mapped_column(
+        JSON, nullable=True, default=None,
+        comment="Far-end speech gain levels to sweep (dB)",
+    )
+    far_end_offset_ms_values: Mapped[list | None] = mapped_column(
+        JSON, nullable=True, default=None,
+        comment="Far-end timing offsets to sweep (ms). Negative = far-end first (barge-in).",
+    )
+
     # Relationships
     test_suite: Mapped["TestSuite"] = relationship(back_populates="sweep_configs", lazy="selectin")
 
@@ -113,7 +127,7 @@ class TestCase(Base):
     speech_sample_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("speech_samples.id"), nullable=False
     )
-    snr_db: Mapped[float | None] = mapped_column(Float, nullable=True)
+    noise_level_db: Mapped[float | None] = mapped_column(Float, nullable=True)
     speech_level_db: Mapped[float | None] = mapped_column(
         Float, nullable=True, default=0.0,
         comment="Digital gain applied to speech before mixing (dB). 0=original level.",
@@ -143,6 +157,24 @@ class TestCase(Base):
     network_config_json: Mapped[dict | None] = mapped_column(
         JSON, nullable=True,
         comment="Network degradation configuration for this test case",
+    )
+
+    # Far-end / 2-way conversation per-case parameters (added in migration 008)
+    far_end_enabled: Mapped[bool] = mapped_column(
+        nullable=False, default=False,
+        comment="Whether this case has far-end (2-way) speech",
+    )
+    far_end_speech_sample_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("speech_samples.id"), nullable=True,
+        comment="Far-end caller speech sample (uncorrelated from near-end)",
+    )
+    far_end_speech_level_db: Mapped[float | None] = mapped_column(
+        Float, nullable=True, default=0.0,
+        comment="Far-end speech gain (dB)",
+    )
+    far_end_offset_ms: Mapped[float | None] = mapped_column(
+        Float, nullable=True, default=0.0,
+        comment="Far-end timing offset (ms). Negative = far-end starts first.",
     )
 
     pipeline: Mapped[str] = mapped_column(

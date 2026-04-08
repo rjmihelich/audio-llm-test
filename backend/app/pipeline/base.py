@@ -19,14 +19,19 @@ class PipelineInput:
     expected_action: str | None = None  # Expected structured action (for command matching)
     system_prompt: str = "You are a helpful in-car voice assistant."
 
+    # Far-end speech for 2-way telephony testing
+    far_end_speech: AudioBuffer | None = None  # Remote caller's audio
+    far_end_text: str | None = None  # What the far-end caller is saying
+
 
 @dataclass
 class PipelineResult:
     """Output from a test pipeline, including all intermediate artifacts."""
 
     # Audio artifacts
-    degraded_audio: AudioBuffer | None = None  # Speech + noise + echo
+    degraded_audio: AudioBuffer | None = None  # Uplink: speech + noise + echo after chain
     echo_audio: AudioBuffer | None = None  # Just the echo component
+    downlink_audio: AudioBuffer | None = None  # Downlink: far-end after codec + network
 
     # ASR (Pipeline B only)
     transcription: Transcription | None = None

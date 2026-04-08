@@ -10,12 +10,14 @@ import {
   fetchKeyStatus,
   fetchOllamaModels,
   fetchAudioSources,
+  listCars,
+  getCarNoiseTypes,
   type SweepConfigRequest,
   type SweepPreview,
   type KeyStatusResponse,
 } from "../api/client";
 
-const SNR_OPTIONS = [-10, -5, 0, 5, 10, 15, 20, 30];
+const NOISE_LEVEL_OPTIONS = [-40, -30, -20, -10, -6, 0, 6, 10];
 const SPEECH_LEVEL_OPTIONS = [-60, -50, -40, -30, -20, -10, 0, 10, 20];
 const NOISE_SOURCES = [
   { key: "road_noise", label: "Road Noise", desc: "LPF pink — engine, tires, wind" },
@@ -104,17 +106,17 @@ function FilterColumn({ label, items, selected, onToggle, onClear, formatLabel }
   return (
     <div>
       <p className="text-[10px] font-medium text-gray-500 mb-1.5">{label}</p>
-      <div className="space-y-1">
+      <div className="space-y-1 max-h-48 overflow-y-auto">
         {sorted.map(([key, count]) => (
           <label key={key} className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
             <input
               type="checkbox"
               checked={selected.includes(key)}
               onChange={() => onToggle(key)}
-              className="rounded border-gray-300 h-3.5 w-3.5"
+              className="rounded border-gray-300 h-3.5 w-3.5 shrink-0"
             />
-            <span className="flex-1 truncate">{formatLabel ? formatLabel(key) : key}</span>
-            <span className="text-[10px] text-gray-400 tabular-nums">{count.toLocaleString()}</span>
+            <span className="flex-1 min-w-0">{formatLabel ? formatLabel(key) : key}</span>
+            <span className="text-[10px] text-gray-400 tabular-nums shrink-0">{count.toLocaleString()}</span>
           </label>
         ))}
       </div>
@@ -353,9 +355,12 @@ function NewTelephonyForm({ onCreated }: { onCreated: () => void }) {
 
   // LLM backends
   const [backends, setBackends] = useState<string[]>([]);
+  const [maxSamples, setMaxSamples] = useState<number | null>(null);
+  const [selectedCar, setSelectedCar] = useState<string>("");
+  const [carNoiseTypes, setCarNoiseTypes] = useState<string[]>([]);
 
   // Audio degradation (shared with LLM suites)
-  const [snrValues, setSnrValues] = useState<number[]>([0, 10, 20]);
+  const [noiseLevels, setNoiseLevels] = useState<number[]>([-20, -10, 0]);
   const [speechLevels, setSpeechLevels] = useState<number[]>([0]);
   const [noiseTypes, setNoiseTypes] = useState<string[]>(["road_noise"]);
   const [interfererLevels, setInterfererLevels] = useState<number[]>([0]);
@@ -375,6 +380,11 @@ function NewTelephonyForm({ onCreated }: { onCreated: () => void }) {
   const [jitterMs, setJitterMs] = useState(0);
   const [codecSwitching, setCodecSwitching] = useState(false);
 
+  // Far-end / 2-way conversation params
+  const [farEndEnabled, setFarEndEnabled] = useState(false);
+  const [farEndLevels, setFarEndLevels] = useState<number[]>([0]);
+  const [farEndOffsets, setFarEndOffsets] = useState<number[]>([0]);
+
   const [preview, setPreview] = useState<SweepPreview | null>(null);
 
   const keyStatus = useQuery({ queryKey: ["keyStatus"], queryFn: fetchKeyStatus });
@@ -390,7 +400,19 @@ function NewTelephonyForm({ onCreated }: { onCreated: () => void }) {
     pipeline: "asr_text" as const,
   }));
 
+  const carsQuery = useQuery({ queryKey: ["cars"], queryFn: listCars });
+
   const hasInterferer = noiseTypes.some((n) => INTERFERER_NOISE_TYPES.has(n));
+
+  async function handleCarChange(carId: string) {
+    setSelectedCar(carId);
+    if (carId) {
+      const types = await getCarNoiseTypes(carId);
+      setCarNoiseTypes(types);
+    } else {
+      setCarNoiseTypes([]);
+    }
+  }
 
   function hasKey(field: keyof KeyStatusResponse | null): boolean {
     if (!field || !keys) return true;
@@ -409,12 +431,13 @@ function NewTelephonyForm({ onCreated }: { onCreated: () => void }) {
       ? [{ packet_loss_pct: packetLoss, packet_loss_pattern: packetLossPattern, burst_length_ms: 80, jitter_ms: jitterMs, codec_switching: codecSwitching }]
       : [];
 
+    const allNoiseTypes = [...noiseTypes, ...carNoiseTypes];
     return {
       name,
       description,
-      snr_db_values: snrValues,
+      noise_level_db_values: noiseLevels,
       speech_level_db_values: speechLevels,
-      noise_types: noiseTypes.length > 0 ? noiseTypes : ["silence"],
+      noise_types: allNoiseTypes.length > 0 ? allNoiseTypes : ["silence"],
       ...(hasInterferer ? { interferer_level_db_values: interfererLevels } : {}),
       echo: { delay_ms_values: delayRange, gain_db_values: gainRange },
       pipelines: ["telephony"],
@@ -423,11 +446,17 @@ function NewTelephonyForm({ onCreated }: { onCreated: () => void }) {
       ...(selectedCategories.length > 0 ? { corpus_categories: selectedCategories } : {}),
       ...(selectedLanguages.length > 0 ? { voice_languages: selectedLanguages } : {}),
       ...(selectedGenders.length > 0 ? { voice_genders: selectedGenders } : {}),
+      ...(maxSamples ? { max_samples: maxSamples } : {}),
       telephony: {
         bt_codec_types: btCodecs,
         agc_presets: agcPresets,
         aec_configs: aecConfigs,
         network_configs: networkConfigs,
+        far_end: {
+          enabled: farEndEnabled,
+          speech_level_db_values: farEndLevels,
+          offset_ms_values: farEndOffsets,
+        },
       },
     };
   }
@@ -470,11 +499,24 @@ function NewTelephonyForm({ onCreated }: { onCreated: () => void }) {
         <div className="bg-blue-50/60 rounded-lg p-4 border border-blue-100">
           <div className="flex items-center justify-between mb-3">
             <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Audio Sources</h4>
-            {audioSources.data && (
-              <span className="text-[11px] font-medium text-blue-600">
-                {audioSources.data.total_samples.toLocaleString()} samples
-              </span>
-            )}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5">
+                <label className="text-[10px] text-gray-500">Max samples</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={maxSamples ?? ""}
+                  onChange={(e) => setMaxSamples(e.target.value ? Number(e.target.value) : null)}
+                  placeholder="All"
+                  className="w-20 border border-gray-200 rounded px-2 py-0.5 text-xs text-right"
+                />
+              </div>
+              {audioSources.data && (
+                <span className="text-[11px] font-medium text-blue-600">
+                  {audioSources.data.total_samples.toLocaleString()} samples
+                </span>
+              )}
+            </div>
           </div>
           {audioSources.data ? (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -658,6 +700,55 @@ function NewTelephonyForm({ onCreated }: { onCreated: () => void }) {
               </div>
             )}
           </div>
+
+          {/* Far-End / 2-Way Conversation */}
+          <div className="border-t border-indigo-200/50 pt-3">
+            <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={farEndEnabled}
+                onChange={(e) => setFarEndEnabled(e.target.checked)}
+                className="rounded border-gray-300 h-3.5 w-3.5"
+              />
+              <span className="font-medium">2-Way Conversation (Far-End Speech)</span>
+            </label>
+            <p className="text-[10px] text-gray-400 ml-6 mt-0.5">
+              Adds uncorrelated far-end caller speech through car speakers. Enables doubletalk testing and barge-in detection.
+            </p>
+            {farEndEnabled && (
+              <div className="mt-2 ml-6 space-y-2">
+                <div className="flex items-start gap-3">
+                  <span className="text-[11px] text-gray-500 w-28 shrink-0 pt-1">Far-End Level</span>
+                  <div>
+                    <PillSelect
+                      options={[-20, -10, -6, 0, 6, 10]}
+                      selected={farEndLevels}
+                      onToggle={(v) => toggleItem(farEndLevels, v as number, setFarEndLevels)}
+                      format={(v) => `${Number(v) > 0 ? "+" : ""}${v} dB`}
+                    />
+                    <p className="text-[10px] text-gray-400 mt-0.5">Gain on far-end speech through car speakers</p>
+                  </div>
+                </div>
+                <div className="flex items-start gap-3">
+                  <span className="text-[11px] text-gray-500 w-28 shrink-0 pt-1">Timing Offset</span>
+                  <div>
+                    <PillSelect
+                      options={[-2000, -1000, -500, 0, 500, 1000]}
+                      selected={farEndOffsets}
+                      onToggle={(v) => toggleItem(farEndOffsets, v as number, setFarEndOffsets)}
+                      format={(v) => {
+                        const n = Number(v);
+                        if (n < 0) return `${n}ms (barge-in)`;
+                        if (n === 0) return "0ms (simultaneous)";
+                        return `+${n}ms`;
+                      }}
+                    />
+                    <p className="text-[10px] text-gray-400 mt-0.5">Negative = far-end starts first, near-end interrupts (barge-in)</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -675,12 +766,12 @@ function NewTelephonyForm({ onCreated }: { onCreated: () => void }) {
 
         <div className="space-y-3">
           <div className="flex items-center gap-3">
-            <span className="text-xs text-gray-500 w-24 shrink-0">SNR (dB)</span>
+            <span className="text-xs text-gray-500 w-24 shrink-0">Noise Level (dB)</span>
             <PillSelect
-              options={SNR_OPTIONS}
-              selected={snrValues}
-              onToggle={(v) => toggleItem(snrValues, v as number, setSnrValues)}
-              format={(v) => `${v}`}
+              options={NOISE_LEVEL_OPTIONS}
+              selected={noiseLevels}
+              onToggle={(v) => toggleItem(noiseLevels, v as number, setNoiseLevels)}
+              format={(v) => `${Number(v) > 0 ? "+" : ""}${v}`}
             />
           </div>
 
@@ -692,6 +783,26 @@ function NewTelephonyForm({ onCreated }: { onCreated: () => void }) {
               onToggle={(v) => toggleItem(noiseTypes, v as string, setNoiseTypes)}
               format={(v) => NOISE_SOURCES.find((s) => s.key === v)?.label ?? String(v)}
             />
+          </div>
+
+          {/* Car noise profile */}
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500 w-24 shrink-0">Car Profile</span>
+            <select
+              value={selectedCar}
+              onChange={(e) => handleCarChange(e.target.value)}
+              className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs text-gray-700 bg-white"
+            >
+              <option value="">None (synthetic noise)</option>
+              {carsQuery.data?.map((car) => (
+                <option key={car.id} value={car.id}>
+                  {car.name} ({car.noise_file_count} files)
+                </option>
+              ))}
+            </select>
+            {carNoiseTypes.length > 0 && (
+              <span className="text-[10px] text-gray-400">{carNoiseTypes.length} noise files</span>
+            )}
           </div>
 
           {hasInterferer && (
@@ -768,7 +879,7 @@ function NewTelephonyForm({ onCreated }: { onCreated: () => void }) {
             <span className="font-semibold text-gray-900">{preview.total_cases.toLocaleString()}</span> cases
             {preview.breakdown.telephony_combos != null && preview.breakdown.telephony_combos > 0 && (
               <span className="ml-1.5 text-xs text-gray-400">
-                ({preview.breakdown.speech_samples} samples &times; {preview.breakdown.snr_levels} SNR &times; {preview.breakdown.noise_types} noise &times; {preview.breakdown.backends} backends &times; {preview.breakdown.telephony_combos} telephony combos)
+                ({preview.breakdown.speech_samples} samples &times; {preview.breakdown.noise_levels} noise levels &times; {preview.breakdown.noise_types} noise &times; {preview.breakdown.backends} backends &times; {preview.breakdown.telephony_combos} telephony combos)
               </span>
             )}
           </div>

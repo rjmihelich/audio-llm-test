@@ -498,8 +498,8 @@ function ResultsTab({ results, runId }: { results: ResultResponse[]; runId: stri
                       </h4>
                       <div className="grid grid-cols-2 gap-2 text-sm">
                         <div className="bg-gray-50 rounded-lg px-3 py-2">
-                          <p className="text-[10px] text-gray-400">SNR</p>
-                          <p className="font-medium text-gray-900">{r.snr_db} dB</p>
+                          <p className="text-[10px] text-gray-400">Noise Level</p>
+                          <p className="font-medium text-gray-900">{r.noise_level_db} dB</p>
                         </div>
                         <div className="bg-gray-50 rounded-lg px-3 py-2">
                           <p className="text-[10px] text-gray-400">Noise</p>
@@ -557,7 +557,82 @@ function ResultsTab({ results, runId }: { results: ResultResponse[]; runId: stri
                     <AudioButton label="Clean" url={getAudioUrl(runId, r.test_case_id, "clean")} color="bg-blue-600" />
                     <AudioButton label="Degraded" url={getAudioUrl(runId, r.test_case_id, "degraded")} color="bg-amber-600" disabled={!r.has_degraded_audio} />
                     <AudioButton label="Echo" url={getAudioUrl(runId, r.test_case_id, "echo")} color="bg-purple-600" disabled={!r.has_degraded_audio} />
+                    {r.has_downlink_audio && (
+                      <AudioButton label="Downlink" url={getAudioUrl(runId, r.test_case_id, "downlink")} color="bg-indigo-600" />
+                    )}
                   </div>
+
+                  {/* Doubletalk Metrics */}
+                  {r.doubletalk_metrics && (
+                    <div className="mt-3 p-3 bg-indigo-50 rounded-lg">
+                      <p className="text-[10px] font-semibold text-indigo-600 uppercase mb-1.5">Doubletalk Metrics</p>
+                      <div className="grid grid-cols-3 sm:grid-cols-6 gap-2 text-xs">
+                        <div>
+                          <p className="text-gray-400 text-[10px]">DT Ratio</p>
+                          <p className="font-medium">{((r.doubletalk_metrics.doubletalk_ratio as number) * 100).toFixed(1)}%</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-400 text-[10px]">ERLE (ST)</p>
+                          <p className="font-medium">{r.doubletalk_metrics.erle_singletalk_db != null ? `${(r.doubletalk_metrics.erle_singletalk_db as number).toFixed(1)} dB` : "—"}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-400 text-[10px]">ERLE (DT)</p>
+                          <p className="font-medium">{r.doubletalk_metrics.erle_doubletalk_db != null ? `${(r.doubletalk_metrics.erle_doubletalk_db as number).toFixed(1)} dB` : "—"}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-400 text-[10px]">NE Distortion</p>
+                          <p className="font-medium">{r.doubletalk_metrics.near_end_distortion_db != null ? `${(r.doubletalk_metrics.near_end_distortion_db as number).toFixed(1)} dB` : "—"}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-400 text-[10px]">NE Active</p>
+                          <p className="font-medium">{((r.doubletalk_metrics.near_end_active_ratio as number) * 100).toFixed(0)}%</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-400 text-[10px]">FE Active</p>
+                          <p className="font-medium">{((r.doubletalk_metrics.far_end_active_ratio as number) * 100).toFixed(0)}%</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Telephony Quality Evaluation */}
+                  {r.telephony_eval && (
+                    <div className="mt-3 p-3 bg-purple-50 rounded-lg">
+                      <p className="text-[10px] font-semibold text-purple-600 uppercase mb-1.5">
+                        Telephony Quality ({(r.telephony_eval.modes_run as string[])?.join(", ")})
+                      </p>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
+                        {!!r.telephony_eval.uplink_quality && (
+                          <div>
+                            <p className="text-gray-400 text-[10px]">Uplink MOS</p>
+                            <p className="font-medium">{String(((r.telephony_eval.uplink_quality as Record<string,unknown>).details as Record<string,unknown>)?.mos_score ?? "—")}</p>
+                          </div>
+                        )}
+                        {!!r.telephony_eval.downlink_quality && (
+                          <div>
+                            <p className="text-gray-400 text-[10px]">Downlink MOS</p>
+                            <p className="font-medium">{String(((r.telephony_eval.downlink_quality as Record<string,unknown>).details as Record<string,unknown>)?.mos_score ?? "—")}</p>
+                          </div>
+                        )}
+                        {!!r.telephony_eval.speaker_attribution && (
+                          <div>
+                            <p className="text-gray-400 text-[10px]">Speaker Attr.</p>
+                            <p className="font-medium">{(Number((r.telephony_eval.speaker_attribution as Record<string,unknown>).score) * 100).toFixed(0)}%</p>
+                          </div>
+                        )}
+                        {!!r.telephony_eval.barge_in && (
+                          <div>
+                            <p className="text-gray-400 text-[10px]">Barge-In</p>
+                            <p className="font-medium">{(Number((r.telephony_eval.barge_in as Record<string,unknown>).score) * 100).toFixed(0)}%</p>
+                          </div>
+                        )}
+                        <div>
+                          <p className="text-gray-400 text-[10px]">Overall</p>
+                          <p className="font-medium">{(Number(r.telephony_eval.overall_score) * 100).toFixed(0)}%</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   {r.error && (
                     <div className="mt-3 p-3 bg-red-50 rounded-lg text-sm text-red-700">
@@ -589,22 +664,22 @@ function ChartsTab({
   stats?: StatsResponse;
   results?: ResultResponse[];
 }) {
-  const chartData = buildAccuracyBySNR(stats, results);
+  const chartData = buildAccuracyByNoiseLevel(stats, results);
   const backends = [...new Set(results?.map((r) => r.llm_backend) ?? [])];
 
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-6">
         <h3 className="text-sm font-semibold text-gray-700 mb-4">
-          Accuracy vs SNR (dB)
+          Accuracy vs Noise Level (dB)
         </h3>
         {chartData.length > 0 ? (
           <ResponsiveContainer width="100%" height={350}>
             <LineChart data={chartData}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
               <XAxis
-                dataKey="snr_db"
-                label={{ value: "SNR (dB)", position: "insideBottom", offset: -5 }}
+                dataKey="noise_level_db"
+                label={{ value: "Noise Level (dB)", position: "insideBottom", offset: -5 }}
               />
               <YAxis
                 domain={[0, 1]}
@@ -628,7 +703,7 @@ function ChartsTab({
           </ResponsiveContainer>
         ) : (
           <p className="text-gray-400 text-sm text-center py-12">
-            Need multiple SNR values to chart accuracy curves.
+            Need multiple noise level values to chart accuracy curves.
           </p>
         )}
       </div>
@@ -636,18 +711,18 @@ function ChartsTab({
   );
 }
 
-function buildAccuracyBySNR(
+function buildAccuracyByNoiseLevel(
   stats?: StatsResponse,
   results?: ResultResponse[]
 ): Array<Record<string, unknown>> {
-  if (stats?.accuracy_by_snr?.length) return stats.accuracy_by_snr;
+  if (stats?.accuracy_by_noise_level?.length) return stats.accuracy_by_noise_level;
   if (!results?.length) return [];
 
   const grouped = new Map<number, Map<string, { pass: number; total: number }>>();
   for (const r of results) {
     if (r.eval_passed == null) continue;
-    if (!grouped.has(r.snr_db)) grouped.set(r.snr_db, new Map());
-    const byBackend = grouped.get(r.snr_db)!;
+    if (!grouped.has(r.noise_level_db)) grouped.set(r.noise_level_db, new Map());
+    const byBackend = grouped.get(r.noise_level_db)!;
     if (!byBackend.has(r.llm_backend))
       byBackend.set(r.llm_backend, { pass: 0, total: 0 });
     const entry = byBackend.get(r.llm_backend)!;
@@ -655,10 +730,10 @@ function buildAccuracyBySNR(
     if (r.eval_passed) entry.pass++;
   }
 
-  const snrs = [...grouped.keys()].sort((a, b) => a - b);
-  return snrs.map((snr) => {
-    const row: Record<string, unknown> = { snr_db: snr };
-    const byBackend = grouped.get(snr)!;
+  const noiseLevels = [...grouped.keys()].sort((a, b) => a - b);
+  return noiseLevels.map((level) => {
+    const row: Record<string, unknown> = { noise_level_db: level };
+    const byBackend = grouped.get(level)!;
     for (const [backend, { pass, total }] of byBackend) {
       row[backend] = total > 0 ? pass / total : null;
     }

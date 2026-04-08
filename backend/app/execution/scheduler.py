@@ -101,7 +101,7 @@ class TestCaseConfig:
     original_text: str
     expected_intent: str
     expected_action: str | None = None
-    snr_db: float = 10.0
+    noise_level_db: float = 0.0
     speech_level_db: float = 0.0  # Digital gain on speech before mixing. 0=original.
     noise_type: str = "pink_lpf"
     noise_file: str | None = None
@@ -124,12 +124,18 @@ class TestCaseConfig:
     aec_residual_config: dict | None = None   # Serialized AECResidualConfig
     network_config: dict | None = None   # Serialized NetworkConfig
 
+    # Far-end (2-way conversation) parameters
+    far_end_speech_file: str | None = None   # Path to far-end caller's audio
+    far_end_text: str | None = None          # What the far-end caller said
+    far_end_speech_level_db: float = 0.0     # Gain on far-end speech
+    far_end_offset_ms: float = 0.0           # Timing offset (negative = far-end first)
+
     @property
     def deterministic_hash(self) -> str:
         """Hash of all parameters for checkpointing."""
         key = json.dumps({
             "speech_file": self.speech_file,
-            "snr_db": self.snr_db,
+            "noise_level_db": self.noise_level_db,
             "speech_level_db": self.speech_level_db,
             "noise_type": self.noise_type,
             "interferer_level_db": self.interferer_level_db,
@@ -142,6 +148,9 @@ class TestCaseConfig:
             "agc_preset": self.agc_preset,
             "aec_residual_config": self.aec_residual_config,
             "network_config": self.network_config,
+            "far_end_speech_file": self.far_end_speech_file,
+            "far_end_speech_level_db": self.far_end_speech_level_db,
+            "far_end_offset_ms": self.far_end_offset_ms,
         }, sort_keys=True)
         return hashlib.sha256(key.encode()).hexdigest()[:16]
 
@@ -306,6 +315,14 @@ class TestScheduler:
             gained_samples = np.clip(gained_samples, -1.0, 1.0)
             speech = AudioBuffer(samples=gained_samples, sample_rate=speech.sample_rate)
 
+        # Load far-end speech if specified (2-way telephony)
+        far_end_audio = None
+        if case.far_end_speech_file:
+            try:
+                far_end_audio = load_audio(case.far_end_speech_file, target_sample_rate=16000)
+            except Exception as e:
+                logger.warning(f"Failed to load far-end speech '{case.far_end_speech_file}': {e}")
+
         # Build pipeline input
         pipeline_input = PipelineInput(
             clean_speech=speech,
@@ -313,6 +330,8 @@ class TestScheduler:
             expected_intent=case.expected_intent,
             expected_action=case.expected_action,
             system_prompt=case.system_prompt,
+            far_end_speech=far_end_audio,
+            far_end_text=case.far_end_text,
         )
 
         # Build interferer AudioBuffer if speech interferer files are specified
@@ -352,7 +371,7 @@ class TestScheduler:
             if case.pipeline == "direct_audio":
                 pipeline = DirectAudioPipeline(
                     llm_backend=backend,
-                    snr_db=case.snr_db,
+                    noise_level_db=case.noise_level_db,
                     noise_type=case.noise_type,
                     noise_file=case.noise_file if not interferer_audio else None,
                     interferer=interferer_audio,
@@ -371,7 +390,7 @@ class TestScheduler:
                 pipeline = ASRTextPipeline(
                     asr_backend=self._asr,
                     llm_backend=backend,
-                    snr_db=case.snr_db,
+                    noise_level_db=case.noise_level_db,
                     noise_type=case.noise_type,
                     noise_file=case.noise_file if not interferer_audio else None,
                     interferer=interferer_audio,
@@ -410,7 +429,7 @@ class TestScheduler:
                         pass
 
                 chain_config = TelephonyChainConfig(
-                    snr_db=case.snr_db,
+                    noise_level_db=case.noise_level_db,
                     noise_type=case.noise_type,
                     noise_file=case.noise_file,
                     speech_level_db=case.speech_level_db,
@@ -421,6 +440,9 @@ class TestScheduler:
                     network_config=net_cfg,
                     interferer=interferer_audio,
                     interferer_level_db=case.interferer_level_db,
+                    far_end_speech=far_end_audio,
+                    far_end_speech_level_db=case.far_end_speech_level_db,
+                    far_end_offset_ms=case.far_end_offset_ms,
                 )
                 pipeline = TelephonyPipeline(
                     llm_backend=backend,
@@ -437,7 +459,7 @@ class TestScheduler:
                         graph_json=graph_json,
                         backends=self._backends,
                         asr_backend=self._asr,
-                        snr_db=case.snr_db,
+                        noise_level_db=case.noise_level_db,
                         noise_type=case.noise_type,
                         echo_config=echo_config,
                     )

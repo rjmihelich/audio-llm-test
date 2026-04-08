@@ -6,7 +6,7 @@ import time
 
 from ..audio.types import AudioBuffer, FilterSpec
 from ..audio.noise import generate_noise
-from ..audio.mixer import mix_at_snr, mix_at_relative_level
+from ..audio.mixer import mix_with_gain, mix_at_relative_level
 from ..audio.echo import EchoConfig, EchoPath
 from ..llm.base import LLMBackend
 from .base import PipelineInput, PipelineResult
@@ -18,7 +18,7 @@ class DirectAudioPipeline:
     def __init__(
         self,
         llm_backend: LLMBackend,
-        snr_db: float,
+        noise_level_db: float,
         noise_type: str = "pink_lpf",
         noise_file: str | None = None,
         interferer: AudioBuffer | None = None,
@@ -30,7 +30,7 @@ class DirectAudioPipeline:
         if not llm_backend.supports_audio_input:
             raise ValueError(f"Backend {llm_backend.name} does not support audio input")
         self._llm = llm_backend
-        self._snr_db = snr_db
+        self._noise_level_db = noise_level_db
         self._noise_type = noise_type
         self._noise_file = noise_file
         self._interferer = interferer
@@ -58,9 +58,7 @@ class DirectAudioPipeline:
 
             # Generate and mix noise
             noise = self._generate_noise(speech.duration_s, speech.num_samples)
-            # Car noise files use their recorded level (no SNR scaling)
-            snr = None if self._noise_type.startswith("car_file:") else self._snr_db
-            degraded = mix_at_snr(speech, noise, snr)
+            degraded = mix_with_gain(speech, noise, self._noise_level_db)
 
             # Mix speech interferer (secondary_voice / babble) at relative level
             if self._interferer is not None and self._interferer_level_db is not None:

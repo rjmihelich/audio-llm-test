@@ -7,6 +7,8 @@ import json
 import logging
 import time
 import uuid
+
+import numpy as np
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,7 +21,9 @@ from ..models.run import TestRun, TestResult
 from ..evaluation.metrics import word_error_rate
 from ..models.test import TestCase, TestSuite
 from ..models.speech import SpeechSample, CorpusEntry, Voice
+from ..audio.types import AudioBuffer
 from ..execution.scheduler import TestScheduler, TestCaseConfig, TestResultRecord
+from ..pipeline.base import PipelineInput
 from ..llm.openai_audio import OpenAIAudioBackend
 from ..llm.openai_realtime import OpenAIRealtimeBackend
 from ..llm.gemini import GeminiBackend
@@ -29,6 +33,7 @@ from ..llm.whisper import WhisperAPIBackend, WhisperLocalBackend
 from ..llm.deepgram_stt import DeepgramSTTBackend
 from ..evaluation.command_match import CommandMatchEvaluator
 from ..evaluation.llm_judge import LLMJudgeEvaluator
+from ..evaluation.telephony_judge import TelephonyJudgeEvaluator
 from ..speech.tts_openai import OpenAITTSProvider
 try:
     from ..speech.tts_google import GoogleTTSProvider
@@ -298,6 +303,13 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
             if judge_backend:
                 evaluators["llm_judge"] = LLMJudgeEvaluator(judge_backend=judge_backend)
 
+            # Add telephony evaluator for telephony pipeline test cases
+            has_telephony = any(tc.pipeline == "telephony" for tc in test_cases)
+            if has_telephony and judge_backend:
+                evaluators["telephony_judge"] = TelephonyJudgeEvaluator(
+                    judge_backend=judge_backend
+                )
+
             eval_names = list(evaluators.keys())
             await broadcast_progress(run_id, {"type": "info", "message": f"✓ Evaluators ready: {', '.join(eval_names)}"})
 
@@ -398,13 +410,43 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                 if getattr(tc, "agc_config_json", None):
                     agc_preset = tc.agc_config_json.get("preset")
 
+                # Source far-end speech for telephony 2-way tests
+                far_end_speech_file = None
+                far_end_text = None
+                far_end_speech_level_db = 0.0
+                far_end_offset_ms = 0.0
+
+                far_end_sample_id = getattr(tc, "far_end_speech_sample_id", None)
+                if far_end_sample_id:
+                    # Explicit far-end sample assigned during test case creation
+                    fe_sample = await session.get(SpeechSample, far_end_sample_id)
+                    if fe_sample and fe_sample.file_path:
+                        far_end_speech_file = fe_sample.file_path
+                        fe_entry = await session.get(CorpusEntry, fe_sample.corpus_entry_id) if fe_sample.corpus_entry_id else None
+                        far_end_text = fe_entry.text if fe_entry else None
+                elif tc.pipeline == "telephony" and getattr(tc, "far_end_enabled", False) and all_ready_samples and speech_sample:
+                    # Auto-select: random uncorrelated sample from corpus
+                    fe_candidates = [
+                        s for s in all_ready_samples
+                        if s.corpus_entry_id != speech_sample.corpus_entry_id
+                        and s.file_path
+                    ]
+                    if fe_candidates:
+                        fe_chosen = _random.choice(fe_candidates)
+                        far_end_speech_file = fe_chosen.file_path
+                        fe_entry = await session.get(CorpusEntry, fe_chosen.corpus_entry_id) if fe_chosen.corpus_entry_id else None
+                        far_end_text = fe_entry.text if fe_entry else None
+
+                far_end_speech_level_db = getattr(tc, "far_end_speech_level_db", None) or 0.0
+                far_end_offset_ms = getattr(tc, "far_end_offset_ms", None) or 0.0
+
                 config = TestCaseConfig(
                     id=str(tc.id),
                     speech_file=speech_sample.file_path if speech_sample else "",
                     original_text=corpus_entry.text if corpus_entry else "",
                     expected_intent=corpus_entry.expected_intent or "" if corpus_entry else "",
                     expected_action=corpus_entry.expected_action if corpus_entry else None,
-                    snr_db=tc.snr_db if tc.snr_db is not None else 10.0,
+                    noise_level_db=tc.noise_level_db if tc.noise_level_db is not None else 0.0,
                     speech_level_db=getattr(tc, "speech_level_db", None) or 0.0,
                     noise_type=noise_type,
                     noise_file=noise_file,
@@ -419,6 +461,10 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                     agc_preset=agc_preset,
                     aec_residual_config=getattr(tc, "aec_residual_config_json", None),
                     network_config=getattr(tc, "network_config_json", None),
+                    far_end_speech_file=far_end_speech_file,
+                    far_end_text=far_end_text,
+                    far_end_speech_level_db=far_end_speech_level_db,
+                    far_end_offset_ms=far_end_offset_ms,
                 )
                 test_case_configs.append(config)
 
@@ -460,6 +506,37 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                     except Exception as e:
                         logger.warning(f"Failed to save degraded audio for {record.test_case_id[:8]}: {e}")
 
+                # Save downlink audio if available (telephony far-end path)
+                downlink_audio_path = None
+                if pr.downlink_audio is not None:
+                    try:
+                        dl_dir = Path(settings.audio_storage_path) / "downlink" / run_id
+                        dl_dir.mkdir(parents=True, exist_ok=True)
+                        dl_path = dl_dir / f"{record.test_case_id}.wav"
+                        save_audio(pr.downlink_audio, dl_path)
+                        downlink_audio_path = str(dl_path)
+                    except Exception as e:
+                        logger.warning(f"Failed to save downlink audio for {record.test_case_id[:8]}: {e}")
+
+                # Run telephony judge evaluation if available and this is a telephony case
+                telephony_eval_json = None
+                tel_evaluator = evaluators.get("telephony_judge")
+                if tel_evaluator and tc_cfg and tc_cfg.pipeline == "telephony" and not has_error:
+                    try:
+                        tel_result = await tel_evaluator.evaluate(
+                            PipelineInput(
+                                clean_speech=AudioBuffer(samples=np.zeros(1), sample_rate=16000),  # placeholder
+                                original_text=tc_cfg.original_text,
+                                expected_intent=tc_cfg.expected_intent,
+                                expected_action=tc_cfg.expected_action,
+                                far_end_text=tc_cfg.far_end_text,
+                            ),
+                            pr,
+                        )
+                        telephony_eval_json = tel_result.to_dict()
+                    except Exception as e:
+                        logger.warning(f"Telephony eval failed for {record.test_case_id[:8]}: {e}")
+
                 async with async_session() as result_session:
                     test_result = TestResult(
                         test_run_id=run_uuid,
@@ -477,6 +554,12 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                         evaluation_details_json=er.details if er else None,
                         evaluator_type=er.evaluator if er else None,
                         degraded_audio_path=degraded_audio_path,
+                        downlink_audio_path=downlink_audio_path,
+                        telephony_eval_json=telephony_eval_json,
+                        doubletalk_metrics_json=(
+                            pr.telephony_metadata.get("doubletalk_metrics")
+                            if pr.telephony_metadata else None
+                        ),
                         error=pr.error,
                         error_stage=record.error_stage,
                     )
@@ -512,7 +595,7 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                         "backend": backend_key,
                         "pipeline": tc_cfg.pipeline if tc_cfg else "",
                         "noise_type": tc_cfg.noise_type if tc_cfg else "",
-                        "snr_db": tc_cfg.snr_db if tc_cfg else None,
+                        "noise_level_db": tc_cfg.noise_level_db if tc_cfg else None,
                         "original_text": (tc_cfg.original_text[:100] if tc_cfg and tc_cfg.original_text else ""),
                         "latency_ms": pr.llm_response.latency_ms if pr.llm_response else None,
                         "passed": er.passed if er else None,

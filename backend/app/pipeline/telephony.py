@@ -1,8 +1,13 @@
 """Pipeline C: Full telephony signal chain → LLM (direct or via ASR).
 
-Applies the complete BT HFP telephony processing path (noise, echo, AEC
-residual, AGC, codec, network degradation) before feeding the result to
-the LLM via direct audio or ASR+text, depending on backend capabilities.
+Simulates a complete 2-way BT HFP phone call in a car cabin:
+  - Uplink: near-end speech + cabin noise + far-end echo → AEC → AGC → codec → network → LLM
+  - Downlink: far-end speech → codec → network → car speakers
+  - Doubletalk: when both speakers are active simultaneously
+
+After audio degradation, the uplink is sent to the LLM for comprehension testing.
+Comprehensive metadata includes signal-level doubletalk metrics, and the
+TelephonyJudgeEvaluator can be run separately for LLM-as-judge quality assessment.
 """
 
 from __future__ import annotations
@@ -42,6 +47,10 @@ class TelephonyPipeline:
         t0 = time.monotonic()
 
         try:
+            # Inject far-end speech into chain config if provided via PipelineInput
+            if input.far_end_speech is not None and self._chain_config.far_end_speech is None:
+                self._chain_config.far_end_speech = input.far_end_speech
+
             # Run the full telephony chain
             chain_result = self._chain.process(input.clean_speech)
             degraded = chain_result.degraded_audio
@@ -70,9 +79,20 @@ class TelephonyPipeline:
                     if self._chain_config.network_config
                     else 0.0
                 ),
-                "snr_db": self._chain_config.snr_db,
+                "noise_level_db": self._chain_config.noise_level_db,
                 "noise_type": self._chain_config.noise_type,
+                # Far-end / doubletalk metadata
+                "has_far_end": chain_result.has_far_end,
+                "far_end_offset_ms": chain_result.far_end_offset_ms,
+                "far_end_text": input.far_end_text or "",
+                "far_end_speech_level_db": self._chain_config.far_end_speech_level_db,
             }
+
+            # Include doubletalk signal-level metrics
+            if chain_result.doubletalk_metrics is not None:
+                telephony_metadata["doubletalk_metrics"] = (
+                    chain_result.doubletalk_metrics.to_dict()
+                )
 
             # Choose inference path based on backend capability
             if self._llm.supports_audio_input:
@@ -83,6 +103,7 @@ class TelephonyPipeline:
                 return PipelineResult(
                     degraded_audio=degraded,
                     echo_audio=chain_result.echo_audio,
+                    downlink_audio=chain_result.downlink_audio,
                     llm_response=llm_response,
                     pipeline_type=self.pipeline_type,
                     total_latency_ms=total_ms,
@@ -109,6 +130,7 @@ class TelephonyPipeline:
                 return PipelineResult(
                     degraded_audio=degraded,
                     echo_audio=chain_result.echo_audio,
+                    downlink_audio=chain_result.downlink_audio,
                     transcription=transcription,
                     llm_response=llm_response,
                     pipeline_type=self.pipeline_type,

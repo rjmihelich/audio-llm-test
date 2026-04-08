@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 from ..audio.types import AudioBuffer
 from ..audio.noise import generate_noise
-from ..audio.mixer import mix_at_snr
+from ..audio.mixer import mix_with_gain
 from ..audio.echo import EchoConfig, EchoPath
 from ..llm.base import LLMBackend, ASRBackend
 from ..speech.tts_base import TTSProvider
@@ -45,7 +45,7 @@ class EchoFeedbackPipeline:
         self,
         llm_backend: LLMBackend,
         echo_config: EchoConfig,
-        snr_db: float,
+        noise_level_db: float,
         noise_type: str = "pink_lpf",
         noise_file: str | None = None,
         sample_rate: int = 16000,
@@ -60,7 +60,7 @@ class EchoFeedbackPipeline:
         self._llm = llm_backend
         self._echo_config = echo_config
         self._echo_path = EchoPath(echo_config, sample_rate)
-        self._snr_db = snr_db
+        self._noise_level_db = noise_level_db
         self._noise_type = noise_type
         self._noise_file = noise_file
         self._sample_rate = sample_rate
@@ -114,7 +114,7 @@ class EchoFeedbackPipeline:
 
                 # Add noise
                 noise = self._generate_noise(speech.duration_s, speech.num_samples)
-                degraded = mix_at_snr(speech, noise, self._snr_db)
+                degraded = mix_with_gain(speech, noise, self._noise_level_db)
 
                 # Add echo from previous LLM response
                 echo_component = None

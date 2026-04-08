@@ -10,12 +10,14 @@ import {
   fetchKeyStatus,
   fetchOllamaModels,
   fetchAudioSources,
+  listCars,
+  getCarNoiseTypes,
   type SweepConfigRequest,
   type SweepPreview,
   type KeyStatusResponse,
 } from "../api/client";
 
-const SNR_OPTIONS = [-10, -5, 0, 5, 10, 15, 20, 30];
+const NOISE_LEVEL_OPTIONS = [-40, -30, -20, -10, -6, 0, 6, 10];
 const SPEECH_LEVEL_OPTIONS = [-60, -50, -40, -30, -20, -10, 0, 10, 20];
 const NOISE_SOURCES = [
   { key: "road_noise", label: "Road Noise", desc: "LPF pink — engine, tires, wind" },
@@ -349,17 +351,17 @@ function FilterColumn({ label, items, selected, onToggle, onClear, formatLabel }
   return (
     <div>
       <p className="text-[10px] font-medium text-gray-500 mb-1.5">{label}</p>
-      <div className="space-y-1">
+      <div className="space-y-1 max-h-48 overflow-y-auto">
         {sorted.map(([key, count]) => (
           <label key={key} className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
             <input
               type="checkbox"
               checked={selected.includes(key)}
               onChange={() => onToggle(key)}
-              className="rounded border-gray-300 h-3.5 w-3.5"
+              className="rounded border-gray-300 h-3.5 w-3.5 shrink-0"
             />
-            <span className="flex-1 truncate">{formatLabel ? formatLabel(key) : key}</span>
-            <span className="text-[10px] text-gray-400 tabular-nums">{count.toLocaleString()}</span>
+            <span className="flex-1 min-w-0">{formatLabel ? formatLabel(key) : key}</span>
+            <span className="text-[10px] text-gray-400 tabular-nums shrink-0">{count.toLocaleString()}</span>
           </label>
         ))}
       </div>
@@ -377,7 +379,7 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
   const [selectedGenders, setSelectedGenders] = useState<string[]>([]);
-  const [snrValues, setSnrValues] = useState<number[]>([0, 10, 20]);
+  const [noiseLevels, setNoiseLevels] = useState<number[]>([-20, -10, 0]);
   const [speechLevels, setSpeechLevels] = useState<number[]>([0]);
   const [noiseTypes, setNoiseTypes] = useState<string[]>(["road_noise"]);
   const [interfererLevels, setInterfererLevels] = useState<number[]>([0]);
@@ -385,12 +387,16 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
   const [gainRange, setGainRange] = useState<number[]>([-60]);
   const [pipelines, setPipelines] = useState<string[]>(["asr_text"]);
   const [backends, setBackends] = useState<string[]>([]);
+  const [maxSamples, setMaxSamples] = useState<number | null>(null);
+  const [selectedCar, setSelectedCar] = useState<string>("");
+  const [carNoiseTypes, setCarNoiseTypes] = useState<string[]>([]);
   const [preview, setPreview] = useState<SweepPreview | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const keyStatus = useQuery({ queryKey: ["keyStatus"], queryFn: fetchKeyStatus });
   const ollamaStatus = useQuery({ queryKey: ["ollamaModels"], queryFn: fetchOllamaModels, refetchInterval: 30000 });
   const audioSources = useQuery({ queryKey: ["audioSources"], queryFn: fetchAudioSources });
+  const carsQuery = useQuery({ queryKey: ["cars"], queryFn: listCars });
   const keys = keyStatus.data;
 
   const ollamaBackends: BackendDef[] = (ollamaStatus.data?.models ?? []).map((m) => ({
@@ -404,13 +410,24 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
 
   const hasInterferer = noiseTypes.some((n) => INTERFERER_NOISE_TYPES.has(n));
 
+  async function handleCarChange(carId: string) {
+    setSelectedCar(carId);
+    if (carId) {
+      const types = await getCarNoiseTypes(carId);
+      setCarNoiseTypes(types);
+    } else {
+      setCarNoiseTypes([]);
+    }
+  }
+
   function buildConfig(): SweepConfigRequest {
+    const allNoiseTypes = [...noiseTypes, ...carNoiseTypes];
     return {
       name,
       description,
-      snr_db_values: snrValues,
+      noise_level_db_values: noiseLevels,
       speech_level_db_values: speechLevels,
-      noise_types: noiseTypes.length > 0 ? noiseTypes : ["silence"],
+      noise_types: allNoiseTypes.length > 0 ? allNoiseTypes : ["silence"],
       ...(hasInterferer ? { interferer_level_db_values: interfererLevels } : {}),
       echo: { delay_ms_values: delayRange, gain_db_values: gainRange },
       pipelines,
@@ -419,6 +436,7 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
       ...(selectedCategories.length > 0 ? { corpus_categories: selectedCategories } : {}),
       ...(selectedLanguages.length > 0 ? { voice_languages: selectedLanguages } : {}),
       ...(selectedGenders.length > 0 ? { voice_genders: selectedGenders } : {}),
+      ...(maxSamples ? { max_samples: maxSamples } : {}),
     };
   }
 
@@ -474,11 +492,24 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
         <div className="bg-blue-50/60 rounded-lg p-4 border border-blue-100">
           <div className="flex items-center justify-between mb-3">
             <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Audio Sources</h4>
-            {audioSources.data && (
-              <span className="text-[11px] font-medium text-blue-600">
-                {audioSources.data.total_samples.toLocaleString()} samples
-              </span>
-            )}
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5">
+                <label className="text-[10px] text-gray-500">Max samples</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={maxSamples ?? ""}
+                  onChange={(e) => setMaxSamples(e.target.value ? Number(e.target.value) : null)}
+                  placeholder="All"
+                  className="w-20 border border-gray-200 rounded px-2 py-0.5 text-xs text-right"
+                />
+              </div>
+              {audioSources.data && (
+                <span className="text-[11px] font-medium text-blue-600">
+                  {audioSources.data.total_samples.toLocaleString()} samples
+                </span>
+              )}
+            </div>
           </div>
           {audioSources.data ? (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -607,14 +638,14 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
         </div>
 
         <div className="space-y-3">
-          {/* SNR */}
+          {/* Noise Level */}
           <div className="flex items-center gap-3">
-            <span className="text-xs text-gray-500 w-24 shrink-0">SNR (dB)</span>
+            <span className="text-xs text-gray-500 w-24 shrink-0">Noise Level (dB)</span>
             <PillSelect
-              options={SNR_OPTIONS}
-              selected={snrValues}
-              onToggle={(v) => toggleItem(snrValues, v as number, setSnrValues)}
-              format={(v) => `${v}`}
+              options={NOISE_LEVEL_OPTIONS}
+              selected={noiseLevels}
+              onToggle={(v) => toggleItem(noiseLevels, v as number, setNoiseLevels)}
+              format={(v) => `${Number(v) > 0 ? "+" : ""}${v}`}
             />
           </div>
 
@@ -627,6 +658,26 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
               onToggle={(v) => toggleItem(noiseTypes, v as string, setNoiseTypes)}
               format={(v) => NOISE_SOURCES.find(s => s.key === v)?.label ?? String(v)}
             />
+          </div>
+
+          {/* Car noise profile */}
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-500 w-24 shrink-0">Car Profile</span>
+            <select
+              value={selectedCar}
+              onChange={(e) => handleCarChange(e.target.value)}
+              className="border border-gray-200 rounded-lg px-3 py-1.5 text-xs text-gray-700 bg-white"
+            >
+              <option value="">None (synthetic noise)</option>
+              {carsQuery.data?.map((car) => (
+                <option key={car.id} value={car.id}>
+                  {car.name} ({car.noise_file_count} files)
+                </option>
+              ))}
+            </select>
+            {carNoiseTypes.length > 0 && (
+              <span className="text-[10px] text-gray-400">{carNoiseTypes.length} noise files</span>
+            )}
           </div>
 
           {/* Interferer Level — shown when secondary_voice or babble is selected */}
@@ -705,7 +756,7 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
             <span className="font-semibold text-gray-900">{preview.total_cases.toLocaleString()}</span> cases
             {preview.breakdown.speech_samples != null && (
               <span className="ml-1.5 text-xs text-gray-400">
-                ({preview.breakdown.speech_samples} samples &times; {preview.breakdown.snr_levels} SNR &times; {preview.breakdown.noise_types} noise &times; {preview.breakdown.backends} backends)
+                ({preview.breakdown.speech_samples} samples &times; {preview.breakdown.noise_levels} noise levels &times; {preview.breakdown.noise_types} noise &times; {preview.breakdown.backends} backends)
               </span>
             )}
           </div>

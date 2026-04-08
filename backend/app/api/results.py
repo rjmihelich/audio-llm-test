@@ -35,7 +35,7 @@ class ResultResponse(BaseModel):
     test_case_id: str
     pipeline_type: str
     llm_backend: str
-    snr_db: float
+    noise_level_db: float
     speech_level_db: float
     delay_ms: float
     gain_db: float
@@ -63,7 +63,10 @@ class ResultResponse(BaseModel):
     corpus_category: str | None = None
     corpus_language: str | None = None
     has_degraded_audio: bool = False
+    has_downlink_audio: bool = False
     created_at: str | None = None
+    telephony_eval: dict | None = None
+    doubletalk_metrics: dict | None = None
 
 
 class StatsResponse(BaseModel):
@@ -76,9 +79,9 @@ class StatsResponse(BaseModel):
     mean_wer: float | None = None
     median_wer: float | None = None
     wer_sample_size: int | None = None
-    accuracy_by_snr: list[dict] | None = None
+    accuracy_by_noise_level: list[dict] | None = None
     accuracy_by_backend: list[dict] | None = None
-    wer_by_snr: list[dict] | None = None
+    wer_by_noise_level: list[dict] | None = None
     wer_by_backend: list[dict] | None = None
     backend_comparison: list[dict] | None = None
     parameter_effects: dict | None = None
@@ -113,7 +116,7 @@ async def _load_results_for_run(
             "test_case_id": str(tc.id),
             "pipeline_type": tc.pipeline,
             "llm_backend": tc.llm_backend,
-            "snr_db": tc.snr_db,
+            "noise_level_db": tc.noise_level_db,
             "speech_level_db": getattr(tc, "speech_level_db", None) or 0.0,
             "delay_ms": tc.delay_ms,
             "gain_db": tc.gain_db,
@@ -141,6 +144,9 @@ async def _load_results_for_run(
             "corpus_category": ce.category if ce else None,
             "corpus_language": ce.language if ce else None,
             "has_degraded_audio": bool(getattr(tr, "degraded_audio_path", None)),
+            "has_downlink_audio": bool(getattr(tr, "downlink_audio_path", None)),
+            "telephony_eval": getattr(tr, "telephony_eval_json", None),
+            "doubletalk_metrics": getattr(tr, "doubletalk_metrics_json", None),
         })
     return records
 
@@ -151,7 +157,7 @@ async def query_results(
     suite_id: str | None = None,
     llm_backend: str | None = None,
     pipeline: str | None = None,
-    snr_db: float | None = None,
+    noise_level_db: float | None = None,
     passed: bool | None = None,
     limit: int = Query(default=100, le=1000),
     offset: int = 0,
@@ -174,8 +180,8 @@ async def query_results(
         stmt = stmt.where(TestCase.llm_backend == llm_backend)
     if pipeline is not None:
         stmt = stmt.where(TestCase.pipeline == pipeline)
-    if snr_db is not None:
-        stmt = stmt.where(TestCase.snr_db == snr_db)
+    if noise_level_db is not None:
+        stmt = stmt.where(TestCase.noise_level_db == noise_level_db)
     if passed is not None:
         stmt = stmt.where(TestResult.evaluation_passed == passed)
 
@@ -189,7 +195,7 @@ async def query_results(
             test_case_id=str(tc.id),
             pipeline_type=tc.pipeline,
             llm_backend=tc.llm_backend,
-            snr_db=tc.snr_db or 0.0,
+            noise_level_db=tc.noise_level_db or 0.0,
             speech_level_db=getattr(tc, "speech_level_db", None) or 0.0,
             delay_ms=tc.delay_ms or 0.0,
             gain_db=tc.gain_db or 0.0,
@@ -217,7 +223,10 @@ async def query_results(
             corpus_category=ce.category if ce else None,
             corpus_language=ce.language if ce else None,
             has_degraded_audio=bool(getattr(tr, "degraded_audio_path", None)),
+            has_downlink_audio=bool(getattr(tr, "downlink_audio_path", None)),
             created_at=tr.created_at.isoformat() if tr.created_at else None,
+            telephony_eval=getattr(tr, "telephony_eval_json", None),
+            doubletalk_metrics=getattr(tr, "doubletalk_metrics_json", None),
         )
         for tr, tc, ce, voice in rows
     ]
@@ -231,11 +240,11 @@ class DashboardResponse(BaseModel):
     overall_mean_score: float | None
     mean_latency_ms: float | None
     mean_wer: float | None = None
-    accuracy_by_snr: list[dict] | None = None
+    accuracy_by_noise_level: list[dict] | None = None
     accuracy_by_speech_level: list[dict] | None = None
     accuracy_by_noise: list[dict] | None = None
     accuracy_by_backend: list[dict] | None = None
-    wer_by_snr: list[dict] | None = None
+    wer_by_noise_level: list[dict] | None = None
     wer_by_backend: list[dict] | None = None
     echo_heatmap: dict | None = None
     speech_level_heatmap: dict | None = None
@@ -289,8 +298,8 @@ async def get_dashboard_aggregate(
     # Summary
     summary = summary_statistics(df)
 
-    # Accuracy by SNR
-    snr_acc = accuracy_by_group(df, "snr_db") if "snr_db" in df.columns and df["snr_db"].nunique() > 1 else pd.DataFrame()
+    # Accuracy by noise level
+    noise_level_acc = accuracy_by_group(df, "noise_level_db") if "noise_level_db" in df.columns and df["noise_level_db"].nunique() > 1 else pd.DataFrame()
 
     # Accuracy by speech level
     speech_level_acc = accuracy_by_group(df, "speech_level_db") if "speech_level_db" in df.columns and df["speech_level_db"].nunique() > 1 else pd.DataFrame()
@@ -326,11 +335,11 @@ async def get_dashboard_aggregate(
                 "col_name": "gain_db",
             }
 
-    # Speech level heatmap (snr_db vs speech_level_db)
+    # Speech level heatmap (noise_level_db vs speech_level_db)
     speech_level_heatmap = None
-    if "speech_level_db" in df.columns and "snr_db" in df.columns:
-        if df["speech_level_db"].nunique() > 1 and df["snr_db"].nunique() > 1:
-            pivot_sl = pivot_heatmap(df, "speech_level_db", "snr_db", value_col="eval_score")
+    if "speech_level_db" in df.columns and "noise_level_db" in df.columns:
+        if df["speech_level_db"].nunique() > 1 and df["noise_level_db"].nunique() > 1:
+            pivot_sl = pivot_heatmap(df, "speech_level_db", "noise_level_db", value_col="eval_score")
             speech_level_heatmap = {
                 "row_labels": [float(x) for x in pivot_sl.index.tolist()],
                 "col_labels": [float(x) for x in pivot_sl.columns.tolist()],
@@ -339,11 +348,11 @@ async def get_dashboard_aggregate(
                     for row in pivot_sl.values.tolist()
                 ],
                 "row_name": "speech_level_db",
-                "col_name": "snr_db",
+                "col_name": "noise_level_db",
             }
 
-    # WER by SNR and backend (Pipeline B only)
-    wer_snr_df = wer_by_group(df, "snr_db")
+    # WER by noise level and backend (Pipeline B only)
+    wer_noise_level_df = wer_by_group(df, "noise_level_db")
     wer_backend_df = wer_by_group(df, "llm_backend")
 
     # Latency by backend
@@ -356,7 +365,7 @@ async def get_dashboard_aggregate(
         latency_data = lat_groups.to_dict("records")
 
     # Parameter effects
-    factors = [c for c in ["snr_db", "speech_level_db", "delay_ms", "gain_db", "noise_type", "llm_backend", "pipeline_type"] if c in df.columns]
+    factors = [c for c in ["noise_level_db", "speech_level_db", "delay_ms", "gain_db", "noise_type", "llm_backend", "pipeline_type"] if c in df.columns]
     param_effects = parameter_effects_anova(df, factors) if factors else None
 
     # Run history: per-run pass rate over time
@@ -380,9 +389,9 @@ async def get_dashboard_aggregate(
         overall_mean_score=summary.get("overall_mean_score"),
         mean_latency_ms=summary.get("mean_latency_ms"),
         mean_wer=summary.get("mean_wer"),
-        wer_by_snr=wer_snr_df.to_dict("records") if not wer_snr_df.empty else None,
+        wer_by_noise_level=wer_noise_level_df.to_dict("records") if not wer_noise_level_df.empty else None,
         wer_by_backend=wer_backend_df.to_dict("records") if not wer_backend_df.empty else None,
-        accuracy_by_snr=snr_acc.to_dict("records") if not snr_acc.empty else None,
+        accuracy_by_noise_level=noise_level_acc.to_dict("records") if not noise_level_acc.empty else None,
         accuracy_by_speech_level=speech_level_acc.to_dict("records") if not speech_level_acc.empty else None,
         accuracy_by_noise=noise_acc.to_dict("records") if not noise_acc.empty else None,
         accuracy_by_backend=backend_acc.to_dict("records") if not backend_acc.empty else None,
@@ -428,17 +437,17 @@ async def get_run_stats(
     # Summary statistics
     summary = summary_statistics(df)
 
-    # Accuracy by SNR
-    snr_df = accuracy_by_group(df, "snr_db")
-    accuracy_by_snr = snr_df.to_dict("records") if not snr_df.empty else None
+    # Accuracy by noise level
+    noise_level_df = accuracy_by_group(df, "noise_level_db")
+    accuracy_by_noise_level = noise_level_df.to_dict("records") if not noise_level_df.empty else None
 
     # Accuracy by backend
     backend_df = accuracy_by_group(df, "llm_backend")
     accuracy_by_backend = backend_df.to_dict("records") if not backend_df.empty else None
 
-    # WER by SNR and backend (Pipeline B only)
-    wer_snr_df = wer_by_group(df, "snr_db")
-    wer_snr = wer_snr_df.to_dict("records") if not wer_snr_df.empty else None
+    # WER by noise level and backend (Pipeline B only)
+    wer_noise_level_df = wer_by_group(df, "noise_level_db")
+    wer_noise_level = wer_noise_level_df.to_dict("records") if not wer_noise_level_df.empty else None
     wer_backend_df = wer_by_group(df, "llm_backend")
     wer_backend = wer_backend_df.to_dict("records") if not wer_backend_df.empty else None
 
@@ -447,7 +456,7 @@ async def get_run_stats(
     backend_comparison = comparison_df.to_dict("records") if not comparison_df.empty else None
 
     # Parameter effects ANOVA
-    factors = [c for c in ["snr_db", "speech_level_db", "delay_ms", "gain_db", "noise_type", "llm_backend", "pipeline_type"] if c in df.columns]
+    factors = [c for c in ["noise_level_db", "speech_level_db", "delay_ms", "gain_db", "noise_type", "llm_backend", "pipeline_type"] if c in df.columns]
     param_effects = parameter_effects_anova(df, factors) if factors else None
 
     return StatsResponse(
@@ -460,9 +469,9 @@ async def get_run_stats(
         mean_wer=summary.get("mean_wer"),
         median_wer=summary.get("median_wer"),
         wer_sample_size=summary.get("wer_sample_size"),
-        accuracy_by_snr=accuracy_by_snr,
+        accuracy_by_noise_level=accuracy_by_noise_level,
         accuracy_by_backend=accuracy_by_backend,
-        wer_by_snr=wer_snr,
+        wer_by_noise_level=wer_noise_level,
         wer_by_backend=wer_backend,
         backend_comparison=backend_comparison,
         parameter_effects=param_effects,
@@ -472,7 +481,7 @@ async def get_run_stats(
 @router.get("/{run_id}/heatmap", response_model=HeatmapResponse)
 async def get_heatmap(
     run_id: str,
-    row_param: str = Query(default="snr_db"),
+    row_param: str = Query(default="noise_level_db"),
     col_param: str = Query(default="delay_ms"),
     llm_backend: str | None = None,
     pipeline: str | None = None,
@@ -576,7 +585,7 @@ async def export_results(
 async def get_test_case_audio(
     run_id: str,
     case_id: str,
-    type: str = Query(default="degraded", pattern="^(clean|degraded|echo)$"),
+    type: str = Query(default="degraded", pattern="^(clean|degraded|echo|downlink)$"),
     session: AsyncSession = Depends(get_session),
 ):
     """Stream the audio for a specific test case result.
@@ -606,8 +615,8 @@ async def get_test_case_audio(
     # Determine file path based on type
     if type == "clean":
         file_path = Path(sample.file_path)
-    elif type == "degraded":
-        # First check if we saved the degraded audio in the result record
+    elif type in ("degraded", "downlink"):
+        # Check if we saved the audio in the result record
         run_uuid = uuid.UUID(run_id)
         tr_stmt = select(TestResult).where(
             TestResult.test_run_id == run_uuid,
@@ -615,10 +624,12 @@ async def get_test_case_audio(
         )
         tr_result = await session.execute(tr_stmt)
         test_result = tr_result.scalar_one_or_none()
-        if test_result and test_result.degraded_audio_path:
+        if type == "downlink" and test_result and getattr(test_result, "downlink_audio_path", None):
+            file_path = Path(test_result.downlink_audio_path)
+        elif type == "degraded" and test_result and test_result.degraded_audio_path:
             file_path = Path(test_result.degraded_audio_path)
         else:
-            # Fallback: look for degraded audio alongside the clean sample
+            # Fallback: look for audio alongside the clean sample
             base_path = Path(sample.file_path)
             file_path = base_path.parent / f"{base_path.stem}_{type}_{case_id}{base_path.suffix}"
     else:
@@ -672,10 +683,10 @@ def _build_stats_summary(df: pd.DataFrame) -> dict:
         grouped["pass_rate"] = grouped["pass_rate"].round(4)
         return {str(row[col]): {"pass_rate": row["pass_rate"], "count": int(row["count"])} for _, row in grouped.iterrows()}
 
-    # By SNR
-    by_snr = _group_pass_rate("snr_db")
-    if by_snr:
-        summary["by_snr"] = by_snr
+    # By noise level
+    by_noise_level = _group_pass_rate("noise_level_db")
+    if by_noise_level:
+        summary["by_noise_level"] = by_noise_level
 
     # By noise type
     by_noise = _group_pass_rate("noise_type")
@@ -729,7 +740,7 @@ def _format_stats_for_prompt(stats_summary: dict) -> str:
         for group_val, metrics in data.items():
             lines.append(f"  {group_val}: pass_rate={metrics['pass_rate'] * 100:.1f}%, n={metrics['count']}")
 
-    _format_group("Pass rate by SNR (dB)", "by_snr")
+    _format_group("Pass rate by Noise Level (dB)", "by_noise_level")
     _format_group("Pass rate by noise type", "by_noise_type")
     _format_group("Pass rate by LLM backend", "by_llm_backend")
     _format_group("Pass rate by voice provider (natural=slurp, synthetic=TTS engines)", "by_voice_provider")

@@ -65,9 +65,9 @@ export interface StatsResponse {
   mean_wer: number | null;
   median_wer: number | null;
   wer_sample_size: number | null;
-  accuracy_by_snr: Array<Record<string, unknown>> | null;
+  accuracy_by_noise_level: Array<Record<string, unknown>> | null;
   accuracy_by_backend: Array<Record<string, unknown>> | null;
-  wer_by_snr: Array<Record<string, unknown>> | null;
+  wer_by_noise_level: Array<Record<string, unknown>> | null;
   wer_by_backend: Array<Record<string, unknown>> | null;
   backend_comparison: Array<Record<string, unknown>> | null;
   parameter_effects: Record<string, unknown> | null;
@@ -85,7 +85,7 @@ export interface ResultResponse {
   test_case_id: string;
   pipeline_type: string;
   llm_backend: string;
-  snr_db: number;
+  noise_level_db: number;
   speech_level_db: number;
   delay_ms: number;
   gain_db: number;
@@ -107,8 +107,11 @@ export interface ResultResponse {
   error: string | null;
   error_stage: string | null;
   has_degraded_audio: boolean;
+  has_downlink_audio?: boolean;
   created_at: string | null;
   telephony_metadata?: Record<string, unknown> | null;
+  telephony_eval?: Record<string, unknown> | null;
+  doubletalk_metrics?: Record<string, unknown> | null;
 }
 
 export interface AECResidualConfigRequest {
@@ -125,17 +128,24 @@ export interface NetworkConfigRequest {
   codec_switching: boolean;
 }
 
+export interface FarEndConfig {
+  enabled: boolean;
+  speech_level_db_values: number[];
+  offset_ms_values: number[];
+}
+
 export interface TelephonyConfig {
   bt_codec_types: string[];
   agc_presets: string[];
   aec_configs: AECResidualConfigRequest[];
   network_configs: NetworkConfigRequest[];
+  far_end: FarEndConfig;
 }
 
 export interface SweepConfigRequest {
   name: string;
   description?: string;
-  snr_db_values: number[];
+  noise_level_db_values: number[];
   speech_level_db_values?: number[];
   noise_types: string[];
   interferer_level_db_values?: (number | null)[];
@@ -153,6 +163,7 @@ export interface SweepConfigRequest {
   corpus_categories?: string[];
   corpus_entry_ids?: string[];
   system_prompt?: string;
+  max_samples?: number | null;
   telephony?: TelephonyConfig;
 }
 
@@ -408,6 +419,27 @@ export function getSampleAudioUrl(sampleId: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Cars
+// ---------------------------------------------------------------------------
+
+export interface CarResponse {
+  id: string;
+  name: string;
+  description: string | null;
+  metadata_json: Record<string, unknown> | null;
+  noise_file_count: number;
+}
+
+export function listCars(): Promise<CarResponse[]> {
+  return request("/cars/");
+}
+
+export function getCarNoiseTypes(carId: string, noiseCategory?: string): Promise<string[]> {
+  const qs = noiseCategory ? `?noise_category=${noiseCategory}` : "";
+  return request(`/cars/${carId}/noise-types${qs}`);
+}
+
+// ---------------------------------------------------------------------------
 // Test Suites
 // ---------------------------------------------------------------------------
 
@@ -530,7 +562,7 @@ export function queryResults(
   filters?: {
     llm_backend?: string;
     pipeline?: string;
-    snr_db?: number;
+    noise_level_db?: number;
     passed?: boolean;
     limit?: number;
     offset?: number;
@@ -563,11 +595,11 @@ export interface DashboardResponse {
   overall_mean_score: number | null;
   mean_latency_ms: number | null;
   mean_wer: number | null;
-  accuracy_by_snr: Array<Record<string, unknown>> | null;
+  accuracy_by_noise_level: Array<Record<string, unknown>> | null;
   accuracy_by_speech_level: Array<Record<string, unknown>> | null;
   accuracy_by_noise: Array<Record<string, unknown>> | null;
   accuracy_by_backend: Array<Record<string, unknown>> | null;
-  wer_by_snr: Array<Record<string, unknown>> | null;
+  wer_by_noise_level: Array<Record<string, unknown>> | null;
   wer_by_backend: Array<Record<string, unknown>> | null;
   speech_level_heatmap: {
     row_labels: number[];
@@ -659,7 +691,7 @@ export function fetchSystemHealth(): Promise<HealthResponse> {
   return request("/health/system");
 }
 
-export function getAudioUrl(runId: string, caseId: string, type: "clean" | "degraded" | "echo" = "degraded"): string {
+export function getAudioUrl(runId: string, caseId: string, type: "clean" | "degraded" | "echo" | "downlink" = "degraded"): string {
   return `/api/results/${runId}/cases/${caseId}/audio?type=${type}`;
 }
 

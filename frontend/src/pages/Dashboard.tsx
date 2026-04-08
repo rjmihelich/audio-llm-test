@@ -52,29 +52,29 @@ function ChartCard({
   );
 }
 
-// -- Accuracy vs SNR line chart with CI band --
-function AccuracyBySNR({ data }: { data: Array<Record<string, unknown>> }) {
+// -- Accuracy vs Noise Level line chart with CI band --
+function AccuracyByNoiseLevel({ data }: { data: Array<Record<string, unknown>> }) {
   const chartData = data
     .map((d) => ({
-      snr: Number(d.group),
+      noise_level: Number(d.group),
       passRate: Math.round(Number(d.pass_rate) * 100),
       meanScore: Math.round(Number(d.mean_score) * 100),
       ciLow: Math.round(Number(d.pass_ci_low) * 100),
       ciHigh: Math.round(Number(d.pass_ci_high) * 100),
       count: Number(d.count),
     }))
-    .sort((a, b) => a.snr - b.snr);
+    .sort((a, b) => a.noise_level - b.noise_level);
 
   return (
-    <ChartCard title="Accuracy vs SNR (dB)" subtitle="Pass rate and mean score by signal-to-noise ratio">
+    <ChartCard title="Accuracy vs Noise Level (dB)" subtitle="Pass rate and mean score by noise level">
       <ResponsiveContainer width="100%" height={280}>
         <AreaChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-          <XAxis dataKey="snr" label={{ value: "SNR (dB)", position: "bottom", offset: -5 }} tick={{ fontSize: 12 }} />
+          <XAxis dataKey="noise_level" label={{ value: "Noise Level (dB)", position: "bottom", offset: -5 }} tick={{ fontSize: 12 }} />
           <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} tick={{ fontSize: 12 }} />
           <Tooltip
             formatter={(val: number, name: string) => [`${val}%`, name]}
-            labelFormatter={(label) => `SNR: ${label} dB`}
+            labelFormatter={(label) => `Noise Level: ${label} dB`}
           />
           <Legend verticalAlign="top" height={36} />
           <Area type="monotone" dataKey="ciHigh" stackId="ci" stroke="none" fill="#3b82f6" fillOpacity={0.08} name="CI Upper" />
@@ -305,24 +305,24 @@ function ParameterEffects({ data }: { data: Record<string, unknown> }) {
   );
 }
 
-// -- WER vs SNR line chart --
-function WERBySNR({ data }: { data: Array<Record<string, unknown>> }) {
+// -- WER vs Noise Level line chart --
+function WERByNoiseLevel({ data }: { data: Array<Record<string, unknown>> }) {
   const chartData = data
     .map((d) => ({
-      snr: Number(d.group),
+      noise_level: Number(d.group),
       wer: Math.round(Number(d.mean_wer) * 1000) / 10, // to percent, 1 dp
       count: Number(d.count),
     }))
-    .sort((a, b) => a.snr - b.snr);
+    .sort((a, b) => a.noise_level - b.noise_level);
 
   return (
-    <ChartCard title="Word Error Rate vs SNR" subtitle="Mean WER (Pipeline B) by signal-to-noise ratio">
+    <ChartCard title="Word Error Rate vs Noise Level" subtitle="Mean WER (Pipeline B) by noise level">
       <ResponsiveContainer width="100%" height={280}>
         <LineChart data={chartData} margin={{ top: 10, right: 20, left: 0, bottom: 0 }}>
           <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-          <XAxis dataKey="snr" label={{ value: "SNR (dB)", position: "bottom", offset: -5 }} tick={{ fontSize: 12 }} />
+          <XAxis dataKey="noise_level" label={{ value: "Noise Level (dB)", position: "bottom", offset: -5 }} tick={{ fontSize: 12 }} />
           <YAxis tickFormatter={(v) => `${v}%`} tick={{ fontSize: 12 }} />
-          <Tooltip formatter={(val: number) => [`${val}%`, "Mean WER"]} labelFormatter={(l) => `SNR: ${l} dB`} />
+          <Tooltip formatter={(val: number) => [`${val}%`, "Mean WER"]} labelFormatter={(l) => `Noise Level: ${l} dB`} />
           <Line type="monotone" dataKey="wer" stroke="#ef4444" strokeWidth={2.5} dot={{ r: 4, fill: "#ef4444" }} name="Mean WER" />
         </LineChart>
       </ResponsiveContainer>
@@ -638,14 +638,14 @@ export default function Dashboard() {
         <EmptyState />
       ) : (
         <>
-          {/* Row 1: SNR curve + Noise comparison */}
+          {/* Row 1: Noise Level curve + Noise comparison */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {d.accuracy_by_snr ? (
-              <AccuracyBySNR data={d.accuracy_by_snr} />
+            {d.accuracy_by_noise_level ? (
+              <AccuracyByNoiseLevel data={d.accuracy_by_noise_level} />
             ) : (
-              <ChartCard title="Accuracy vs SNR" subtitle="Run a sweep with multiple SNR values to see this chart">
+              <ChartCard title="Accuracy vs Noise Level" subtitle="Run a sweep with multiple noise level values to see this chart">
                 <div className="h-64 flex items-center justify-center text-gray-300 text-sm">
-                  Need multiple SNR values in sweep
+                  Need multiple noise level values in sweep
                 </div>
               </ChartCard>
             )}
@@ -709,12 +709,12 @@ export default function Dashboard() {
 
           {/* Row 4: WER charts */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {d.wer_by_snr && d.wer_by_snr.length > 1 ? (
-              <WERBySNR data={d.wer_by_snr} />
+            {d.wer_by_noise_level && d.wer_by_noise_level.length > 1 ? (
+              <WERByNoiseLevel data={d.wer_by_noise_level} />
             ) : (
-              <ChartCard title="Word Error Rate vs SNR" subtitle="Run Pipeline B (ASR) tests with multiple SNR values">
+              <ChartCard title="Word Error Rate vs Noise Level" subtitle="Run Pipeline B (ASR) tests with multiple noise level values">
                 <div className="h-64 flex items-center justify-center text-gray-300 text-sm">
-                  Requires Pipeline B (asr_text) with multiple SNR values
+                  Requires Pipeline B (asr_text) with multiple noise level values
                 </div>
               </ChartCard>
             )}

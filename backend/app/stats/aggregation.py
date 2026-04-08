@@ -12,7 +12,7 @@ def build_results_dataframe(result_dicts: list[dict]) -> pd.DataFrame:
     df = pd.DataFrame(result_dicts)
 
     # Ensure numeric types
-    numeric_cols = ["eval_score", "total_latency_ms", "llm_latency_ms", "snr_db",
+    numeric_cols = ["eval_score", "total_latency_ms", "llm_latency_ms", "noise_level_db",
                     "delay_ms", "gain_db"]
     for col in numeric_cols:
         if col in df.columns:
@@ -35,7 +35,7 @@ def pivot_heatmap(
 
     Args:
         df: Results DataFrame.
-        row_col: Column for heatmap rows (e.g., "snr_db").
+        row_col: Column for heatmap rows (e.g., "noise_level_db").
         col_col: Column for heatmap columns (e.g., "delay_ms").
         value_col: Column to aggregate.
         agg_func: Aggregation function ("mean", "median", "count").

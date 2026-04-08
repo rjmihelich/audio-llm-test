@@ -54,6 +54,22 @@ class NetworkConfigRequest(BaseModel):
     codec_switching: bool = False
 
 
+class FarEndConfig(BaseModel):
+    """Far-end (2-way conversation) configuration for telephony testing."""
+    enabled: bool = Field(
+        default=False,
+        description="Enable 2-way conversation with uncorrelated far-end speech",
+    )
+    speech_level_db_values: list[float] = Field(
+        default=[0.0],
+        description="Far-end speech gain levels to sweep (dB). 0 = original level.",
+    )
+    offset_ms_values: list[float] = Field(
+        default=[0.0],
+        description="Timing offsets (ms). Negative = far-end first (barge-in). 0 = simultaneous.",
+    )
+
+
 class TelephonyConfig(BaseModel):
     """Telephony sweep dimensions — only used when telephony pipeline is selected."""
     bt_codec_types: list[str] = Field(
@@ -72,12 +88,16 @@ class TelephonyConfig(BaseModel):
         default_factory=list,
         description="Network degradation configs to sweep. Empty = no network impairment.",
     )
+    far_end: FarEndConfig = Field(
+        default_factory=FarEndConfig,
+        description="2-way conversation (far-end speech) configuration.",
+    )
 
 
 class SweepConfigRequest(BaseModel):
     name: str
     description: str = ""
-    snr_db_values: list[float] = Field(default=[-10, -5, 0, 5, 10, 20])
+    noise_level_db_values: list[float] = Field(default=[-30, -20, -10, 0])
     speech_level_db_values: list[float] = Field(
         default=[0.0],
         description="Speech gain levels in dB. 0=original, negative=quieter/whisper, positive=louder/shout/overload.",
@@ -97,6 +117,10 @@ class SweepConfigRequest(BaseModel):
     corpus_categories: list[str] | None = None
     corpus_entry_ids: list[str] | None = None
     system_prompt: str = "You are a helpful in-car voice assistant."
+    max_samples: int | None = Field(
+        default=None,
+        description="Cap the number of speech samples used. None = use all matching samples.",
+    )
     telephony: TelephonyConfig | None = Field(
         default=None,
         description="Telephony sweep config. Required when 'telephony' is in pipelines.",
@@ -115,7 +139,7 @@ class TestSuiteResponse(BaseModel):
 
 class SweepPreview(BaseModel):
     total_cases: int
-    breakdown: dict  # e.g., {"snr_levels": 6, "echo_configs": 12, "backends": 3, ...}
+    breakdown: dict  # e.g., {"noise_levels": 4, "echo_configs": 12, "backends": 3, ...}
     estimated_duration_minutes: float | None = None
 
 
@@ -169,6 +193,10 @@ async def create_test_suite(
     if not samples:
         raise HTTPException(400, "No ready speech samples match the filters")
 
+    if config.max_samples and len(samples) > config.max_samples:
+        import random
+        samples = random.sample(samples, config.max_samples)
+
     # Create test suite
     suite = TestSuite(
         name=config.name,
@@ -187,9 +215,11 @@ async def create_test_suite(
     telephony_enabled = "telephony" in config.pipelines
     tel = config.telephony
 
+    far_end_cfg = tel.far_end if tel else None
+
     sweep = SweepConfig(
         test_suite_id=suite.id,
-        snr_db_values=config.snr_db_values,
+        noise_level_db_values=config.noise_level_db_values,
         speech_level_db_values=config.speech_level_db_values,
         delay_ms_values=config.echo.delay_ms_values,
         gain_db_values=config.echo.gain_db_values,
@@ -203,6 +233,9 @@ async def create_test_suite(
         agc_configs=tel.agc_presets if tel else None,
         aec_residual_configs=[c.model_dump() for c in tel.aec_configs] if tel and tel.aec_configs else None,
         network_configs=[c.model_dump() for c in tel.network_configs] if tel and tel.network_configs else None,
+        far_end_enabled=far_end_cfg.enabled if far_end_cfg else False,
+        far_end_speech_level_db_values=far_end_cfg.speech_level_db_values if far_end_cfg and far_end_cfg.enabled else None,
+        far_end_offset_ms_values=far_end_cfg.offset_ms_values if far_end_cfg and far_end_cfg.enabled else None,
     )
     session.add(sweep)
 
@@ -215,11 +248,16 @@ async def create_test_suite(
     tel_aec_configs = [c.model_dump() for c in tel.aec_configs] if tel and tel.aec_configs else [None]
     tel_network_configs = [c.model_dump() for c in tel.network_configs] if tel and tel.network_configs else [None]
 
+    # Far-end dimensions (only when enabled)
+    far_end_enabled = far_end_cfg.enabled if far_end_cfg else False
+    far_end_level_values = far_end_cfg.speech_level_db_values if far_end_cfg and far_end_cfg.enabled else [0.0]
+    far_end_offset_values = far_end_cfg.offset_ms_values if far_end_cfg and far_end_cfg.enabled else [0.0]
+
     # Build cartesian product and create test cases
     total_cases = 0
-    for sample, snr, speech_level, noise, delay, gain, pipeline, backend in product(
+    for sample, noise_level, speech_level, noise, delay, gain, pipeline, backend in product(
         samples,
-        config.snr_db_values,
+        config.noise_level_db_values,
         config.speech_level_db_values,
         config.noise_types,
         config.echo.delay_ms_values,
@@ -238,16 +276,18 @@ async def create_test_suite(
             # For telephony pipeline, add telephony dimensions to cartesian product
             if pipeline == "telephony":
                 telephony_combos = [
-                    (codec, agc, aec, net)
+                    (codec, agc, aec, net, fe_level, fe_offset)
                     for codec in tel_codecs
                     for agc in tel_agc_presets
                     for aec in tel_aec_configs
                     for net in tel_network_configs
+                    for fe_level in far_end_level_values
+                    for fe_offset in far_end_offset_values
                 ]
             else:
-                telephony_combos = [(None, None, None, None)]
+                telephony_combos = [(None, None, None, None, 0.0, 0.0)]
 
-            for bt_codec, agc_preset, aec_cfg, net_cfg in telephony_combos:
+            for bt_codec, agc_preset, aec_cfg, net_cfg, fe_level, fe_offset in telephony_combos:
                 # Build agc_config_json from preset name
                 agc_config_json = {"preset": agc_preset} if agc_preset else None
 
@@ -256,7 +296,7 @@ async def create_test_suite(
                     {
                         "test_suite_id": str(suite.id),
                         "speech_sample_id": str(sample.id),
-                        "snr_db": snr,
+                        "noise_level_db": noise_level,
                         "speech_level_db": speech_level,
                         "noise_type": noise,
                         "interferer_level_db": interferer_level,
@@ -268,6 +308,9 @@ async def create_test_suite(
                         "agc_preset": agc_preset,
                         "aec_config": aec_cfg,
                         "network_config": net_cfg,
+                        "far_end_enabled": far_end_enabled if pipeline == "telephony" else False,
+                        "far_end_speech_level_db": fe_level,
+                        "far_end_offset_ms": fe_offset,
                     },
                     sort_keys=True,
                 )
@@ -276,7 +319,7 @@ async def create_test_suite(
                 test_case = TestCase(
                     test_suite_id=suite.id,
                     speech_sample_id=sample.id,
-                    snr_db=snr,
+                    noise_level_db=noise_level,
                     speech_level_db=speech_level,
                     delay_ms=delay,
                     gain_db=gain,
@@ -291,6 +334,9 @@ async def create_test_suite(
                     agc_config_json=agc_config_json,
                     aec_residual_config_json=aec_cfg,
                     network_config_json=net_cfg,
+                    far_end_enabled=far_end_enabled if pipeline == "telephony" else False,
+                    far_end_speech_level_db=fe_level if pipeline == "telephony" else None,
+                    far_end_offset_ms=fe_offset if pipeline == "telephony" else None,
                 )
                 session.add(test_case)
                 total_cases += 1
@@ -448,7 +494,7 @@ async def preview_sweep(
 
     Does not create anything -- just returns the count and breakdown.
     """
-    n_snr = len(config.snr_db_values)
+    n_noise_levels = len(config.noise_level_db_values)
     n_speech_level = len(config.speech_level_db_values)
     n_delay = len(config.echo.delay_ms_values)
     n_gain = len(config.echo.gain_db_values)
@@ -466,7 +512,11 @@ async def preview_sweep(
     n_tel_agc = len(tel.agc_presets) if tel else 1
     n_tel_aec = max(len(tel.aec_configs), 1) if tel else 1
     n_tel_net = max(len(tel.network_configs), 1) if tel else 1
-    n_tel_combos = n_tel_codecs * n_tel_agc * n_tel_aec * n_tel_net
+    # Far-end dimensions
+    fe_cfg = tel.far_end if tel else None
+    n_fe_levels = len(fe_cfg.speech_level_db_values) if fe_cfg and fe_cfg.enabled else 1
+    n_fe_offsets = len(fe_cfg.offset_ms_values) if fe_cfg and fe_cfg.enabled else 1
+    n_tel_combos = n_tel_codecs * n_tel_agc * n_tel_aec * n_tel_net * n_fe_levels * n_fe_offsets
 
     n_telephony_pipelines = sum(1 for p in config.pipelines if p == "telephony")
     n_other_pipelines = len(config.pipelines) - n_telephony_pipelines
@@ -508,8 +558,11 @@ async def preview_sweep(
     count_result = await session.execute(sample_stmt)
     n_speech = count_result.scalar() or 0
 
+    if config.max_samples and n_speech > config.max_samples:
+        n_speech = config.max_samples
+
     # Cases per noise combo (non-telephony pipelines)
-    base_per_noise = n_speech * n_snr * n_speech_level * n_delay * n_gain * n_backends
+    base_per_noise = n_speech * n_noise_levels * n_speech_level * n_delay * n_gain * n_backends
     other_cases = base_per_noise * n_other_pipelines * (
         n_regular_noises + n_interferer_noises * n_interferer_levels
     )
@@ -523,7 +576,7 @@ async def preview_sweep(
     return SweepPreview(
         total_cases=total,
         breakdown={
-            "snr_levels": n_snr,
+            "noise_levels": n_noise_levels,
             "speech_levels": n_speech_level,
             "noise_types": len(config.noise_types),
             "interferer_levels": n_interferer_levels,
@@ -533,6 +586,9 @@ async def preview_sweep(
             "backends": n_backends,
             "speech_samples": n_speech,
             "telephony_combos": n_tel_combos if n_telephony_pipelines > 0 else 0,
+            "far_end_enabled": bool(fe_cfg and fe_cfg.enabled),
+            "far_end_levels": n_fe_levels if n_telephony_pipelines > 0 else 0,
+            "far_end_offsets": n_fe_offsets if n_telephony_pipelines > 0 else 0,
         },
     )
 

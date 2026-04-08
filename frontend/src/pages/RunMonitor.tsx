@@ -478,8 +478,8 @@ export default function RunMonitor() {
                   <p className="font-medium text-gray-800">{String(currentCase.pipeline || "--")}</p>
                 </div>
                 <div>
-                  <p className="text-[10px] text-gray-400">Noise</p>
-                  <p className="font-medium text-gray-800">{String(currentCase.noise_type || "--")} @ {String(currentCase.snr_db ?? "--")}dB</p>
+                  <p className="text-[10px] text-gray-400">Noise Level</p>
+                  <p className="font-medium text-gray-800">{String(currentCase.noise_type || "--")} @ {String(currentCase.noise_level_db ?? "--")}dB</p>
                 </div>
                 <div>
                   <p className="text-[10px] text-gray-400">Rate</p>
@@ -650,7 +650,7 @@ export default function RunMonitor() {
                 }`} />
                 <span className="text-gray-400 font-mono text-[10px] w-24 shrink-0 truncate">{r.llm_backend || "--"}</span>
                 <span className="text-gray-500 font-mono text-[10px] w-14 shrink-0">{r.test_case_id?.slice(0, 8)}</span>
-                <span className="text-[10px] text-gray-400 w-10 shrink-0">{r.snr_db != null ? `${r.snr_db}dB` : ""}</span>
+                <span className="text-[10px] text-gray-400 w-10 shrink-0">{r.noise_level_db != null ? `${r.noise_level_db}dB` : ""}</span>
 
                 {r.error ? (
                   <>
