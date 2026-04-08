@@ -105,6 +105,7 @@ export interface ResultResponse {
   output_tokens: number | null;
   error: string | null;
   error_stage: string | null;
+  has_degraded_audio: boolean;
   created_at: string | null;
 }
 
