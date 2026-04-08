@@ -26,8 +26,13 @@ async def lifespan(app: FastAPI):
     import backend.app.models.test  # noqa: F401
     import backend.app.models.run  # noqa: F401
     import backend.app.models.car  # noqa: F401
+    import backend.app.models.pipeline  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+    # Seed pipeline-studio templates
+    from pipeline_studio.backend.engine.templates import seed_templates
+    await seed_templates()
 
     yield
     # Shutdown: cleanup
@@ -57,6 +62,10 @@ app.include_router(ws.router, prefix="/api/ws", tags=["WebSocket"])
 app.include_router(settings_router.router, prefix="/api/settings", tags=["Settings"])
 app.include_router(health.router, prefix="/api/health", tags=["Health"])
 app.include_router(cars.router, prefix="/api/cars", tags=["Cars"])
+
+# Pipeline Studio routes
+from pipeline_studio.backend.api.pipelines import router as pipelines_router
+app.include_router(pipelines_router, tags=["Pipelines"])
 
 
 @app.get("/api/ping")

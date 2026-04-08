@@ -20,6 +20,16 @@ _EXECUTOR_MAP: dict[str, str] = {
     "audio_buffer": "audio_processing",
     # network
     "network_sim": "network_sim",
+    # telephony
+    "telephony_codec": "telephony_nodes",
+    "aec": "telephony_nodes",
+    "aec_residual": "telephony_nodes",
+    "agc": "telephony_nodes",
+    "doubletalk_metrics": "telephony_nodes",
+    # dsp
+    "noise_reduction": "dsp_nodes",
+    "sample_rate_converter": "dsp_nodes",
+    "time_delay": "dsp_nodes",
     # speech
     "tts": "speech_nodes",
     "stt": "speech_nodes",

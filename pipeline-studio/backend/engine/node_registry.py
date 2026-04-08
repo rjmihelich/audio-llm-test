@@ -64,6 +64,7 @@ class NodeTypeDef:
 CATEGORIES = {
     "sources": {"label": "Audio Sources", "color": "#A3E635"},
     "processing": {"label": "Audio Processing", "color": "#FBBF24"},
+    "telephony": {"label": "Telephony", "color": "#E879F9"},
     "network": {"label": "Network", "color": "#F87171"},
     "speech": {"label": "Speech", "color": "#818CF8"},
     "llm": {"label": "LLM", "color": "#34D399"},
@@ -116,6 +117,9 @@ def _build_registry() -> dict[str, NodeTypeDef]:
                             {"value": "babble", "label": "Babble"},
                             {"value": "traffic", "label": "Traffic"},
                             {"value": "wind", "label": "Wind"},
+                            {"value": "hvac_fan", "label": "HVAC Fan"},
+                            {"value": "secondary_voice", "label": "Secondary Voice"},
+                            {"value": "silence", "label": "Silence"},
                         ]),
             ConfigField("seed", "number", "Random Seed", None,
                         description="Leave empty for random"),
@@ -428,6 +432,217 @@ def _build_registry() -> dict[str, NodeTypeDef]:
                         description="Audio chunk size for streaming"),
         ],
         color="#34D399",
+    ))
+
+    # -----------------------------------------------------------------------
+    # TELEPHONY BLOCKS
+    # -----------------------------------------------------------------------
+    nodes.append(NodeTypeDef(
+        type_id="telephony_codec",
+        label="BT Codec",
+        category="telephony",
+        description="Bluetooth codec simulation (CVSD narrowband / mSBC wideband)",
+        inputs=[PortDef("audio_in", PortType.audio)],
+        outputs=[PortDef("audio_out", PortType.audio)],
+        config_fields=[
+            ConfigField("codec_type", "select", "Codec", "msbc",
+                        options=[
+                            {"value": "cvsd", "label": "CVSD (8 kHz narrowband)"},
+                            {"value": "msbc", "label": "mSBC (16 kHz wideband)"},
+                            {"value": "none", "label": "None (bypass)"},
+                        ]),
+            ConfigField("cvsd_snr_db", "slider", "CVSD SNR (dB)", 27.0,
+                        min_val=20, max_val=35, step=1,
+                        description="Quantization noise floor for CVSD"),
+            ConfigField("msbc_snr_db", "slider", "mSBC SNR (dB)", 37.0,
+                        min_val=30, max_val=45, step=1,
+                        description="Quantization noise floor for mSBC"),
+            ConfigField("seed", "number", "Random Seed", None,
+                        description="Leave empty for random"),
+        ],
+        color="#E879F9",
+    ))
+
+    nodes.append(NodeTypeDef(
+        type_id="aec",
+        label="Echo Canceller",
+        category="telephony",
+        description="Adaptive acoustic echo canceller (NLMS / RLS / Kalman)",
+        inputs=[
+            PortDef("mic_in", PortType.audio, required=True, description="Mic signal (near-end + echo)"),
+            PortDef("ref_in", PortType.audio, required=True, description="Far-end reference (speaker signal)"),
+        ],
+        outputs=[
+            PortDef("audio_out", PortType.audio, description="Echo-cancelled signal"),
+            PortDef("echo_est", PortType.audio, description="Estimated echo component"),
+        ],
+        config_fields=[
+            ConfigField("algorithm", "select", "Algorithm", "nlms",
+                        options=[
+                            {"value": "nlms", "label": "NLMS"},
+                            {"value": "rls", "label": "RLS"},
+                            {"value": "kalman", "label": "Kalman"},
+                        ]),
+            ConfigField("filter_length_ms", "slider", "Filter Length (ms)", 200,
+                        min_val=50, max_val=500, step=10,
+                        description="Adaptive filter tap length"),
+            ConfigField("step_size", "slider", "Step Size (mu)", 0.1,
+                        min_val=0.01, max_val=1.0, step=0.01,
+                        description="NLMS learning rate"),
+            ConfigField("forgetting_factor", "slider", "Forgetting Factor", 0.999,
+                        min_val=0.9, max_val=1.0, step=0.001,
+                        description="RLS lambda (memory length)"),
+            ConfigField("process_noise", "number", "Process Noise (Q)", 0.0001,
+                        description="Kalman process noise covariance"),
+            ConfigField("measurement_noise", "number", "Measurement Noise (R)", 0.01,
+                        description="Kalman measurement noise covariance"),
+            ConfigField("regularization", "number", "Regularization", 0.000001,
+                        description="Diagonal loading"),
+        ],
+        color="#E879F9",
+    ))
+
+    nodes.append(NodeTypeDef(
+        type_id="aec_residual",
+        label="AEC Residual",
+        category="telephony",
+        description="Simulate imperfect AEC: residual echo leakage + NLD artifacts",
+        inputs=[
+            PortDef("mic_in", PortType.audio, required=True, description="Mic / AEC output signal"),
+            PortDef("echo_ref", PortType.audio, required=False, description="Echo reference for residual"),
+        ],
+        outputs=[PortDef("audio_out", PortType.audio)],
+        config_fields=[
+            ConfigField("suppression_db", "slider", "Suppression (dB)", -25,
+                        min_val=-60, max_val=0, step=1,
+                        description="-40=excellent AEC, -10=poor AEC"),
+            ConfigField("residual_type", "select", "Residual Type", "mixed",
+                        options=[
+                            {"value": "partial", "label": "Partial (attenuated echo)"},
+                            {"value": "nonlinear", "label": "Non-linear (NLD artifacts)"},
+                            {"value": "mixed", "label": "Mixed (most realistic)"},
+                        ]),
+            ConfigField("nonlinear_distortion", "slider", "NLD Strength", 0.3,
+                        min_val=0, max_val=1, step=0.05),
+            ConfigField("seed", "number", "Random Seed", None),
+        ],
+        color="#E879F9",
+    ))
+
+    nodes.append(NodeTypeDef(
+        type_id="agc",
+        label="AGC",
+        category="telephony",
+        description="Automatic gain control with envelope follower and compression",
+        inputs=[PortDef("audio_in", PortType.audio)],
+        outputs=[PortDef("audio_out", PortType.audio)],
+        config_fields=[
+            ConfigField("preset", "select", "Preset", "mild",
+                        options=[
+                            {"value": "off", "label": "Off"},
+                            {"value": "mild", "label": "Mild"},
+                            {"value": "aggressive", "label": "Aggressive"},
+                            {"value": "custom", "label": "Custom"},
+                        ]),
+            ConfigField("target_rms_db", "slider", "Target RMS (dB)", -18,
+                        min_val=-30, max_val=0, step=1),
+            ConfigField("attack_ms", "slider", "Attack (ms)", 50,
+                        min_val=5, max_val=500, step=5),
+            ConfigField("release_ms", "slider", "Release (ms)", 200,
+                        min_val=20, max_val=2000, step=10),
+            ConfigField("max_gain_db", "slider", "Max Gain (dB)", 30,
+                        min_val=0, max_val=40, step=1),
+            ConfigField("compression_ratio", "slider", "Compression Ratio", 4.0,
+                        min_val=1, max_val=20, step=0.5),
+        ],
+        color="#E879F9",
+    ))
+
+    nodes.append(NodeTypeDef(
+        type_id="noise_reduction",
+        label="Noise Reduction",
+        category="telephony",
+        description="Speech enhancement via spectral subtraction or Wiener filtering",
+        inputs=[
+            PortDef("audio_in", PortType.audio, required=True, description="Noisy input"),
+            PortDef("noise_ref", PortType.audio, required=False, description="Noise-only reference (optional)"),
+        ],
+        outputs=[PortDef("audio_out", PortType.audio)],
+        config_fields=[
+            ConfigField("method", "select", "Method", "spectral_subtraction",
+                        options=[
+                            {"value": "spectral_subtraction", "label": "Spectral Subtraction"},
+                            {"value": "wiener", "label": "Wiener Filter"},
+                        ]),
+            ConfigField("suppression_db", "slider", "Max Suppression (dB)", 12,
+                        min_val=0, max_val=30, step=1),
+            ConfigField("noise_floor_db", "slider", "Noise Floor (dB)", -60,
+                        min_val=-80, max_val=-20, step=1),
+            ConfigField("smoothing_factor", "slider", "Smoothing", 0.9,
+                        min_val=0, max_val=1, step=0.05),
+        ],
+        color="#E879F9",
+    ))
+
+    nodes.append(NodeTypeDef(
+        type_id="sample_rate_converter",
+        label="Sample Rate Converter",
+        category="telephony",
+        description="Polyphase sample rate conversion",
+        inputs=[PortDef("audio_in", PortType.audio)],
+        outputs=[PortDef("audio_out", PortType.audio)],
+        config_fields=[
+            ConfigField("target_sample_rate", "select", "Target Rate", 16000,
+                        options=[
+                            {"value": 8000, "label": "8 kHz (narrowband)"},
+                            {"value": 16000, "label": "16 kHz (wideband)"},
+                            {"value": 22050, "label": "22.05 kHz"},
+                            {"value": 44100, "label": "44.1 kHz (CD)"},
+                            {"value": 48000, "label": "48 kHz"},
+                        ]),
+        ],
+        color="#E879F9",
+    ))
+
+    nodes.append(NodeTypeDef(
+        type_id="time_delay",
+        label="Time Delay",
+        category="telephony",
+        description="Standalone delay line",
+        inputs=[PortDef("audio_in", PortType.audio)],
+        outputs=[PortDef("audio_out", PortType.audio)],
+        config_fields=[
+            ConfigField("delay_ms", "slider", "Delay (ms)", 0,
+                        min_val=0, max_val=2000, step=1),
+            ConfigField("pad_mode", "select", "Mode", "zero",
+                        options=[
+                            {"value": "zero", "label": "Zero-pad (extends length)"},
+                            {"value": "truncate", "label": "Truncate (maintain length)"},
+                        ]),
+        ],
+        color="#E879F9",
+    ))
+
+    nodes.append(NodeTypeDef(
+        type_id="doubletalk_metrics",
+        label="Doubletalk Metrics",
+        category="telephony",
+        description="Compute ERLE, near-end distortion, and activity ratios",
+        inputs=[
+            PortDef("near_end_clean", PortType.audio, required=True, description="Clean near-end reference"),
+            PortDef("far_end_clean", PortType.audio, required=False, description="Clean far-end reference"),
+            PortDef("mic_signal", PortType.audio, required=True, description="Mic signal (with echo)"),
+            PortDef("aec_output", PortType.audio, required=False, description="AEC output signal"),
+            PortDef("echo_ref", PortType.audio, required=False, description="Echo reference"),
+        ],
+        outputs=[PortDef("eval_out", PortType.evaluation)],
+        config_fields=[
+            ConfigField("frame_ms", "slider", "Frame Size (ms)", 20,
+                        min_val=10, max_val=40, step=5),
+            ConfigField("vad_threshold_db", "slider", "VAD Threshold (dB)", -40,
+                        min_val=-60, max_val=-20, step=1),
+        ],
+        color="#E879F9",
     ))
 
     # -----------------------------------------------------------------------
