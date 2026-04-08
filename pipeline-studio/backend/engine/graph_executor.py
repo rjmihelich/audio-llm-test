@@ -424,6 +424,22 @@ class GraphPipeline:
                     confidence=node_outputs.get("_confidence", 0.0),
                 )
 
+            # Capture audio_output sink nodes
+            if node.type_id == "audio_output" and "_audio" in node_outputs:
+                audio = node_outputs["_audio"]
+                if isinstance(audio, AudioBuffer):
+                    result.degraded_audio = audio
+
+            # Capture text_output sink nodes
+            if node.type_id == "text_output" and "_text" in node_outputs:
+                if not result.transcription:
+                    from backend.app.llm.base import Transcription
+                    result.transcription = Transcription(
+                        text=node_outputs["_text"],
+                        language="en",
+                        confidence=0.0,
+                    )
+
         return result
 
     def _get_executor(self, type_id: str):

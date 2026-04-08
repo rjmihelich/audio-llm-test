@@ -245,6 +245,23 @@ async def execute_preview(
     try:
         graph_pipeline = GraphPipeline(pipeline.graph_json)
         pipeline_result = await graph_pipeline.execute(sample_input)
+
+        # Serialize audio as base64 WAV if present
+        audio_wav_base64 = None
+        if pipeline_result.degraded_audio is not None:
+            import base64
+            import io
+            import soundfile as sf
+            buf = io.BytesIO()
+            sf.write(
+                buf,
+                pipeline_result.degraded_audio.samples,
+                pipeline_result.degraded_audio.sample_rate,
+                format="WAV",
+                subtype="PCM_16",
+            )
+            audio_wav_base64 = base64.b64encode(buf.getvalue()).decode("ascii")
+
         return {
             "success": True,
             "pipeline_type": pipeline_result.pipeline_type,
@@ -253,6 +270,8 @@ async def execute_preview(
             "has_llm_response": pipeline_result.llm_response is not None,
             "has_transcription": pipeline_result.transcription is not None,
             "llm_response_text": pipeline_result.llm_response.text if pipeline_result.llm_response else None,
+            "transcription_text": pipeline_result.transcription.text if pipeline_result.transcription else None,
+            "audio_wav_base64": audio_wav_base64,
             "error": pipeline_result.error,
         }
     except Exception as e:

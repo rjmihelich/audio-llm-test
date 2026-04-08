@@ -28,7 +28,7 @@ export default function Toolbar({ registry }: ToolbarProps) {
   const [name, setName] = useState(pipelineName)
   const [showTemplates, setShowTemplates] = useState(false)
   const [validationMsg, setValidationMsg] = useState<string | null>(null)
-  const [previewResult, setPreviewResult] = useState<string | null>(null)
+  const [previewResult, setPreviewResult] = useState<any | null>(null)
   const templateRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -132,14 +132,14 @@ export default function Toolbar({ registry }: ToolbarProps) {
 
   const handlePreview = async () => {
     if (!pipelineId) {
-      setPreviewResult('Save the pipeline first')
+      setPreviewResult({ error: 'Save the pipeline first' })
       return
     }
     try {
       const result = await previewMutation.mutateAsync(pipelineId)
-      setPreviewResult(JSON.stringify(result, null, 2))
+      setPreviewResult(result)
     } catch (e) {
-      setPreviewResult(`Preview error: ${e instanceof Error ? e.message : 'unknown'}`)
+      setPreviewResult({ error: `Preview error: ${e instanceof Error ? e.message : 'unknown'}` })
     }
   }
 
@@ -344,12 +344,78 @@ export default function Toolbar({ registry }: ToolbarProps) {
       {/* Preview result modal */}
       {previewResult && (
         <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50" onClick={() => setPreviewResult(null)}>
-          <div className="bg-white rounded-lg shadow-xl p-4 max-w-lg max-h-96 overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-2">
+          <div className="bg-white rounded-lg shadow-xl p-5 max-w-xl w-full max-h-[80vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-3">
               <h3 className="text-sm font-bold">Preview Result</h3>
               <button onClick={() => setPreviewResult(null)} className="text-gray-400 hover:text-gray-600 text-sm">Close</button>
             </div>
-            <pre className="text-xs font-mono bg-gray-50 rounded p-3 whitespace-pre-wrap">{previewResult}</pre>
+
+            {/* Error state */}
+            {previewResult.error && !previewResult.success && (
+              <div className="bg-red-50 text-red-700 text-xs rounded p-3 mb-3">{previewResult.error}</div>
+            )}
+
+            {/* Success content */}
+            {previewResult.success && (
+              <div className="space-y-3">
+                {/* Status row */}
+                <div className="flex items-center gap-3 text-xs">
+                  <span className="text-green-600 font-medium">Success</span>
+                  <span className="text-gray-400">|</span>
+                  <span className="text-gray-500">{previewResult.total_latency_ms?.toFixed(0)} ms</span>
+                  <span className="text-gray-400">|</span>
+                  <span className="text-gray-500">{previewResult.pipeline_type}</span>
+                </div>
+
+                {/* Audio player */}
+                {previewResult.audio_wav_base64 && (
+                  <div>
+                    <div className="text-xs font-medium text-gray-600 mb-1">Audio Output</div>
+                    <audio
+                      controls
+                      className="w-full h-10"
+                      src={`data:audio/wav;base64,${previewResult.audio_wav_base64}`}
+                    />
+                  </div>
+                )}
+
+                {/* Transcription */}
+                {previewResult.transcription_text && (
+                  <div>
+                    <div className="text-xs font-medium text-gray-600 mb-1">Text Output</div>
+                    <div className="bg-gray-50 rounded p-3 text-sm text-gray-800">{previewResult.transcription_text}</div>
+                  </div>
+                )}
+
+                {/* LLM Response */}
+                {previewResult.llm_response_text && (
+                  <div>
+                    <div className="text-xs font-medium text-gray-600 mb-1">LLM Response</div>
+                    <div className="bg-blue-50 rounded p-3 text-sm text-gray-800">{previewResult.llm_response_text}</div>
+                  </div>
+                )}
+
+                {/* Warnings */}
+                {previewResult.error && (
+                  <div className="bg-yellow-50 text-yellow-700 text-xs rounded p-2">{previewResult.error}</div>
+                )}
+
+                {/* Raw JSON toggle */}
+                <details className="text-xs">
+                  <summary className="text-gray-400 cursor-pointer hover:text-gray-600">Raw JSON</summary>
+                  <pre className="font-mono bg-gray-50 rounded p-2 mt-1 whitespace-pre-wrap text-[10px] max-h-40 overflow-auto">
+                    {JSON.stringify({ ...previewResult, audio_wav_base64: previewResult.audio_wav_base64 ? '(base64 data)' : null }, null, 2)}
+                  </pre>
+                </details>
+              </div>
+            )}
+
+            {/* Fallback for non-structured responses */}
+            {!previewResult.success && !previewResult.error && (
+              <pre className="text-xs font-mono bg-gray-50 rounded p-3 whitespace-pre-wrap">
+                {JSON.stringify(previewResult, null, 2)}
+              </pre>
+            )}
           </div>
         </div>
       )}
