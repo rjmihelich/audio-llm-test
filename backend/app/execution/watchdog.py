@@ -103,7 +103,8 @@ class Watchdog:
         """Record a diagnostic finding."""
         d = WatchdogDiagnostic(level, component, message, action_taken, details)
         self._diagnostics.append(d)
-        log_fn = getattr(logger, level if level != "critical" else "error")
+        log_level = {"warn": "warning", "critical": "error"}.get(level, level)
+        log_fn = getattr(logger, log_level)
         prefix = f"[{component}]"
         if action_taken:
             log_fn(f"{prefix} {message} -> {action_taken}")
