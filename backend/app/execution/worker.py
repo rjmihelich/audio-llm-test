@@ -382,10 +382,9 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                     except Exception:
                         pass
 
-                # Save degraded audio WAV for failed/low-score cases
+                # Save degraded audio WAV for all cases (enables live monitoring & replay)
                 degraded_audio_path = None
-                is_failed = has_error or (er and not er.passed)
-                if is_failed and pr.degraded_audio is not None:
+                if pr.degraded_audio is not None:
                     try:
                         degraded_dir = Path(settings.audio_storage_path) / "degraded" / run_id
                         degraded_dir.mkdir(parents=True, exist_ok=True)

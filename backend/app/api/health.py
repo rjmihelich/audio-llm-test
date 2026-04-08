@@ -323,3 +323,30 @@ async def get_system_health():
         worker=worker,
         timestamp=datetime.now(timezone.utc).isoformat(),
     )
+
+
+@router.get("/watchdog")
+async def get_watchdog_report():
+    """Get the latest watchdog diagnostic report."""
+    try:
+        from arq.connections import create_pool, RedisSettings
+        from ..config import settings
+
+        redis = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+        report_raw = await redis.get("watchdog:report")
+        history_raw = await redis.lrange("watchdog:history", 0, 9)  # Last 10 reports
+        await redis.close()
+
+        def _decode(v):
+            return v.decode() if isinstance(v, bytes) else v
+
+        report = json.loads(_decode(report_raw)) if report_raw else None
+        history = [json.loads(_decode(h)) for h in (history_raw or [])]
+
+        return {
+            "current": report,
+            "history": history,
+            "status": "active" if report else "no_data",
+        }
+    except Exception as e:
+        return {"current": None, "history": [], "status": f"error: {e}"}
