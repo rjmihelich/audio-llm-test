@@ -38,6 +38,7 @@ class PipelineResult:
     pipeline_type: str = ""
     total_latency_ms: float = 0.0
     error: str | None = None
+    telephony_metadata: dict | None = None  # Populated by TelephonyPipeline
 
 
 @runtime_checkable

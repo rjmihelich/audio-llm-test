@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import {
-  listLLMTestSuites,
+  listTelephonySuites,
   createTestSuite,
   deleteTestSuite,
   previewSweep,
@@ -24,39 +24,106 @@ const NOISE_SOURCES = [
   { key: "babble", label: "Babble", desc: "6 overlapping talkers" },
 ] as const;
 const INTERFERER_NOISE_TYPES = new Set(["secondary_voice", "babble"]);
-const PIPELINES = ["direct_audio", "asr_text"];
 
-// Backend definitions with cost / key info
-interface BackendDef {
-  key: string;          // value sent to API e.g. "ollama:mistral"
-  label: string;        // display name
-  paid: boolean;        // requires paid API key
-  keyField: keyof KeyStatusResponse | null;  // which key to check
-  pipeline: "direct_audio" | "asr_text" | "both";
-}
-
-const CLOUD_BACKENDS: BackendDef[] = [
-  // --- Paid ---
-  { key: "openai:gpt-4o-audio-preview", label: "OpenAI · GPT-4o Audio", paid: true, keyField: "openai", pipeline: "both" },
-  { key: "openai-realtime:gpt-4o-realtime-preview", label: "OpenAI · Realtime API", paid: true, keyField: "openai", pipeline: "both" },
-  { key: "openai:gpt-4o-mini",          label: "OpenAI · GPT-4o Mini",  paid: true, keyField: "openai", pipeline: "asr_text" },
-  { key: "gemini:gemini-2.0-flash",     label: "Google · Gemini 2.0 Flash", paid: true, keyField: "google", pipeline: "both" },
-  { key: "anthropic:claude-haiku-4-5-20251001", label: "Anthropic · Claude Haiku", paid: true, keyField: "anthropic", pipeline: "asr_text" },
+const BT_CODECS = [
+  { key: "cvsd", label: "CVSD (8 kHz)" },
+  { key: "msbc", label: "mSBC (16 kHz)" },
+  { key: "none", label: "None" },
+];
+const AGC_PRESETS = [
+  { key: "off", label: "Off" },
+  { key: "mild", label: "Mild" },
+  { key: "aggressive", label: "Aggressive" },
 ];
 
-// STT definitions
-interface STTDef {
+interface BackendDef {
   key: string;
   label: string;
   paid: boolean;
   keyField: keyof KeyStatusResponse | null;
+  pipeline: "direct_audio" | "asr_text" | "both";
 }
 
-const STT_BACKENDS: STTDef[] = [
-  { key: "whisper-local",  label: "Whisper Local (free)",  paid: false, keyField: null },
-  { key: "whisper-api",    label: "Whisper API",           paid: true,  keyField: "openai" },
-  { key: "deepgram",       label: "Deepgram Nova-2",       paid: true,  keyField: "deepgram" },
+const CLOUD_BACKENDS: BackendDef[] = [
+  { key: "openai:gpt-4o-audio-preview", label: "OpenAI · GPT-4o Audio", paid: true, keyField: "openai", pipeline: "both" },
+  { key: "openai-realtime:gpt-4o-realtime-preview", label: "OpenAI · Realtime API", paid: true, keyField: "openai", pipeline: "both" },
+  { key: "openai:gpt-4o-mini", label: "OpenAI · GPT-4o Mini", paid: true, keyField: "openai", pipeline: "asr_text" },
+  { key: "gemini:gemini-2.0-flash", label: "Google · Gemini 2.0 Flash", paid: true, keyField: "google", pipeline: "both" },
+  { key: "anthropic:claude-haiku-4-5-20251001", label: "Anthropic · Claude Haiku", paid: true, keyField: "anthropic", pipeline: "asr_text" },
 ];
+
+// ---------------------------------------------------------------------------
+// Shared UI components
+// ---------------------------------------------------------------------------
+
+function PillSelect({ options, selected, onToggle, format }: {
+  options: (number | string)[];
+  selected: (number | string)[];
+  onToggle: (v: number | string) => void;
+  format?: (v: number | string) => string;
+}) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {options.map((v) => (
+        <button
+          key={v}
+          onClick={() => onToggle(v)}
+          className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
+            selected.includes(v)
+              ? "bg-slate-800 text-white border-slate-800"
+              : "bg-white text-gray-500 border-gray-200 hover:border-gray-400"
+          }`}
+        >
+          {format ? format(v) : String(v)}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function SectionHeader({ title, count }: { title: string; count?: number }) {
+  return (
+    <div className="flex items-center gap-2 mb-2">
+      <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{title}</h4>
+      {count !== undefined && (
+        <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">{count} selected</span>
+      )}
+    </div>
+  );
+}
+
+function FilterColumn({ label, items, selected, onToggle, onClear, formatLabel }: {
+  label: string;
+  items: Record<string, number>;
+  selected: string[];
+  onToggle: (v: string) => void;
+  onClear: () => void;
+  formatLabel?: (v: string) => string;
+}) {
+  const sorted = Object.entries(items).sort(([, a], [, b]) => b - a);
+  return (
+    <div>
+      <p className="text-[10px] font-medium text-gray-500 mb-1.5">{label}</p>
+      <div className="space-y-1">
+        {sorted.map(([key, count]) => (
+          <label key={key} className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={selected.includes(key)}
+              onChange={() => onToggle(key)}
+              className="rounded border-gray-300 h-3.5 w-3.5"
+            />
+            <span className="flex-1 truncate">{formatLabel ? formatLabel(key) : key}</span>
+            <span className="text-[10px] text-gray-400 tabular-nums">{count.toLocaleString()}</span>
+          </label>
+        ))}
+      </div>
+      {selected.length > 0 && (
+        <button onClick={onClear} className="mt-1 text-[10px] text-blue-500 hover:text-blue-700">clear</button>
+      )}
+    </div>
+  );
+}
 
 function CostBadge({ paid, hasKey }: { paid: boolean; hasKey: boolean }) {
   if (!paid) {
@@ -69,9 +136,7 @@ function CostBadge({ paid, hasKey }: { paid: boolean; hasKey: boolean }) {
   return (
     <span
       className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-bold ${
-        hasKey
-          ? "bg-amber-100 text-amber-700"
-          : "bg-red-100 text-red-600"
+        hasKey ? "bg-amber-100 text-amber-700" : "bg-red-100 text-red-600"
       }`}
     >
       [$]
@@ -79,17 +144,21 @@ function CostBadge({ paid, hasKey }: { paid: boolean; hasKey: boolean }) {
   );
 }
 
-export default function TestSuites() {
+// ---------------------------------------------------------------------------
+// Main page
+// ---------------------------------------------------------------------------
+
+export default function TelephonySuites() {
   const queryClient = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [expandedSuiteId, setExpandedSuiteId] = useState<string | null>(null);
 
-  const suites = useQuery({ queryKey: ["llmSuites"], queryFn: listLLMTestSuites });
+  const suites = useQuery({ queryKey: ["telephonySuites"], queryFn: listTelephonySuites });
 
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="text-2xl font-bold text-gray-900">LLM Test Suites</h2>
+        <h2 className="text-2xl font-bold text-gray-900">Telephony Test Suites</h2>
         <button
           onClick={() => setShowForm(!showForm)}
           className="px-4 py-2 bg-slate-800 text-white text-sm font-medium rounded-lg hover:bg-slate-700 transition-colors"
@@ -99,15 +168,14 @@ export default function TestSuites() {
       </div>
 
       {showForm && (
-        <NewSuiteForm
+        <NewTelephonyForm
           onCreated={() => {
             setShowForm(false);
-            queryClient.invalidateQueries({ queryKey: ["llmSuites"] });
+            queryClient.invalidateQueries({ queryKey: ["telephonySuites"] });
           }}
         />
       )}
 
-      {/* Existing suites */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
@@ -123,7 +191,7 @@ export default function TestSuites() {
             {suites.data?.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-6 py-8 text-center text-gray-400">
-                  No test suites yet.
+                  No telephony test suites yet.
                 </td>
               </tr>
             )}
@@ -132,9 +200,7 @@ export default function TestSuites() {
                 key={s.id}
                 suite={s}
                 expanded={expandedSuiteId === s.id}
-                onToggle={() =>
-                  setExpandedSuiteId(expandedSuiteId === s.id ? null : s.id)
-                }
+                onToggle={() => setExpandedSuiteId(expandedSuiteId === s.id ? null : s.id)}
               />
             ))}
           </tbody>
@@ -153,14 +219,7 @@ function SuiteRow({
   expanded,
   onToggle,
 }: {
-  suite: {
-    id: string;
-    name: string;
-    description: string;
-    status: string;
-    total_cases: number;
-    created_at: string;
-  };
+  suite: { id: string; name: string; description: string; status: string; total_cases: number; created_at: string };
   expanded: boolean;
   onToggle: () => void;
 }) {
@@ -174,27 +233,20 @@ function SuiteRow({
 
   const deleteMut = useMutation({
     mutationFn: () => deleteTestSuite(suite.id),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["llmSuites"] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["telephonySuites"] }),
   });
 
   return (
     <>
-      <tr
-        className="border-b border-gray-50 hover:bg-gray-50 cursor-pointer"
-        onClick={onToggle}
-      >
+      <tr className="border-b border-gray-50 hover:bg-gray-50 cursor-pointer" onClick={onToggle}>
         <td className="px-6 py-3 font-medium text-gray-900">
           <span className="mr-2 text-gray-400 text-xs">{expanded ? "▼" : "▶"}</span>
           {suite.name}
         </td>
         <td className="px-6 py-3">
-          <span
-            className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-              suite.status === "ready"
-                ? "bg-green-100 text-green-700"
-                : "bg-gray-100 text-gray-600"
-            }`}
-          >
+          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+            suite.status === "ready" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"
+          }`}>
             {suite.status}
           </span>
         </td>
@@ -223,11 +275,7 @@ function SuiteRow({
             )}
             <button
               onClick={() => {
-                if (
-                  window.confirm(
-                    `Delete suite "${suite.name}" and all its test cases?`
-                  )
-                ) {
+                if (window.confirm(`Delete suite "${suite.name}" and all its test cases?`)) {
                   deleteMut.mutate();
                 }
               }}
@@ -268,7 +316,6 @@ function SuiteRow({
                 onClick={() => launch.mutate(5)}
                 disabled={launch.isPending || suite.status !== "ready"}
                 className="px-4 py-2 text-sm font-medium text-amber-700 bg-amber-100 rounded-lg hover:bg-amber-200 disabled:opacity-50 transition-colors"
-                title="Run 5 random test cases to verify everything works"
               >
                 {launch.isPending ? "..." : "Quick Test (5 cases)"}
               </button>
@@ -279,15 +326,8 @@ function SuiteRow({
               >
                 {launch.isPending ? "Launching..." : "Launch Full Run"}
               </button>
-              {suite.status !== "ready" && (
-                <span className="text-xs text-gray-400">
-                  Suite must be in "ready" status to launch a run.
-                </span>
-              )}
               {launch.isError && (
-                <span className="text-xs text-red-600">
-                  {(launch.error as Error).message}
-                </span>
+                <span className="text-xs text-red-600">{(launch.error as Error).message}</span>
               )}
             </div>
           </td>
@@ -298,95 +338,44 @@ function SuiteRow({
 }
 
 // ---------------------------------------------------------------------------
-// New Suite Form
+// New Telephony Suite Form
 // ---------------------------------------------------------------------------
 
-function SectionHeader({ title, count }: { title: string; count?: number }) {
-  return (
-    <div className="flex items-center gap-2 mb-2">
-      <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{title}</h4>
-      {count !== undefined && (
-        <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded-full">{count} selected</span>
-      )}
-    </div>
-  );
-}
-
-function PillSelect({ options, selected, onToggle, format }: {
-  options: (number | string)[];
-  selected: (number | string)[];
-  onToggle: (v: number | string) => void;
-  format?: (v: number | string) => string;
-}) {
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {options.map((v) => (
-        <button
-          key={v}
-          onClick={() => onToggle(v)}
-          className={`px-2.5 py-1 rounded-full text-[11px] font-medium border transition-colors ${
-            selected.includes(v)
-              ? "bg-slate-800 text-white border-slate-800"
-              : "bg-white text-gray-500 border-gray-200 hover:border-gray-400"
-          }`}
-        >
-          {format ? format(v) : String(v)}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function FilterColumn({ label, items, selected, onToggle, onClear, formatLabel }: {
-  label: string;
-  items: Record<string, number>;
-  selected: string[];
-  onToggle: (v: string) => void;
-  onClear: () => void;
-  formatLabel?: (v: string) => string;
-}) {
-  const sorted = Object.entries(items).sort(([, a], [, b]) => b - a);
-  return (
-    <div>
-      <p className="text-[10px] font-medium text-gray-500 mb-1.5">{label}</p>
-      <div className="space-y-1">
-        {sorted.map(([key, count]) => (
-          <label key={key} className="flex items-center gap-2 text-xs text-gray-700 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={selected.includes(key)}
-              onChange={() => onToggle(key)}
-              className="rounded border-gray-300 h-3.5 w-3.5"
-            />
-            <span className="flex-1 truncate">{formatLabel ? formatLabel(key) : key}</span>
-            <span className="text-[10px] text-gray-400 tabular-nums">{count.toLocaleString()}</span>
-          </label>
-        ))}
-      </div>
-      {selected.length > 0 && (
-        <button onClick={onClear} className="mt-1 text-[10px] text-blue-500 hover:text-blue-700">clear</button>
-      )}
-    </div>
-  );
-}
-
-function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
+function NewTelephonyForm({ onCreated }: { onCreated: () => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+
+  // Audio source filters
   const [selectedProviders, setSelectedProviders] = useState<string[]>([]);
   const [selectedCategories, setSelectedCategories] = useState<string[]>([]);
   const [selectedLanguages, setSelectedLanguages] = useState<string[]>([]);
   const [selectedGenders, setSelectedGenders] = useState<string[]>([]);
+
+  // LLM backends
+  const [backends, setBackends] = useState<string[]>([]);
+
+  // Audio degradation (shared with LLM suites)
   const [snrValues, setSnrValues] = useState<number[]>([0, 10, 20]);
   const [speechLevels, setSpeechLevels] = useState<number[]>([0]);
   const [noiseTypes, setNoiseTypes] = useState<string[]>(["road_noise"]);
   const [interfererLevels, setInterfererLevels] = useState<number[]>([0]);
   const [delayRange, setDelayRange] = useState<number[]>([0]);
   const [gainRange, setGainRange] = useState<number[]>([-60]);
-  const [pipelines, setPipelines] = useState<string[]>(["asr_text"]);
-  const [backends, setBackends] = useState<string[]>([]);
-  const [preview, setPreview] = useState<SweepPreview | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Telephony-specific params
+  const [btCodecs, setBtCodecs] = useState<string[]>(["cvsd"]);
+  const [agcPresets, setAgcPresets] = useState<string[]>(["off"]);
+  const [aecEnabled, setAecEnabled] = useState(false);
+  const [aecSuppression, setAecSuppression] = useState(-25);
+  const [aecNld, setAecNld] = useState(0.3);
+  const [networkEnabled, setNetworkEnabled] = useState(false);
+  const [packetLoss, setPacketLoss] = useState(2);
+  const [packetLossPattern, setPacketLossPattern] = useState("random");
+  const [jitterMs, setJitterMs] = useState(0);
+  const [codecSwitching, setCodecSwitching] = useState(false);
+
+  const [preview, setPreview] = useState<SweepPreview | null>(null);
 
   const keyStatus = useQuery({ queryKey: ["keyStatus"], queryFn: fetchKeyStatus });
   const ollamaStatus = useQuery({ queryKey: ["ollamaModels"], queryFn: fetchOllamaModels, refetchInterval: 30000 });
@@ -400,11 +389,26 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
     keyField: "ollama" as keyof KeyStatusResponse,
     pipeline: "asr_text" as const,
   }));
-  const ALL_BACKENDS: BackendDef[] = [...ollamaBackends, ...CLOUD_BACKENDS];
 
   const hasInterferer = noiseTypes.some((n) => INTERFERER_NOISE_TYPES.has(n));
 
+  function hasKey(field: keyof KeyStatusResponse | null): boolean {
+    if (!field || !keys) return true;
+    return keys[field] ?? false;
+  }
+
+  function toggleItem<T>(arr: T[], item: T, setter: (v: T[]) => void) {
+    setter(arr.includes(item) ? arr.filter((x) => x !== item) : [...arr, item]);
+  }
+
   function buildConfig(): SweepConfigRequest {
+    const aecConfigs = aecEnabled
+      ? [{ suppression_db: aecSuppression, residual_type: "mixed", nonlinear_distortion: aecNld }]
+      : [];
+    const networkConfigs = networkEnabled
+      ? [{ packet_loss_pct: packetLoss, packet_loss_pattern: packetLossPattern, burst_length_ms: 80, jitter_ms: jitterMs, codec_switching: codecSwitching }]
+      : [];
+
     return {
       name,
       description,
@@ -413,12 +417,18 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
       noise_types: noiseTypes.length > 0 ? noiseTypes : ["silence"],
       ...(hasInterferer ? { interferer_level_db_values: interfererLevels } : {}),
       echo: { delay_ms_values: delayRange, gain_db_values: gainRange },
-      pipelines,
+      pipelines: ["telephony"],
       llm_backends: backends,
       ...(selectedProviders.length > 0 ? { voice_providers: selectedProviders } : {}),
       ...(selectedCategories.length > 0 ? { corpus_categories: selectedCategories } : {}),
       ...(selectedLanguages.length > 0 ? { voice_languages: selectedLanguages } : {}),
       ...(selectedGenders.length > 0 ? { voice_genders: selectedGenders } : {}),
+      telephony: {
+        bt_codec_types: btCodecs,
+        agc_presets: agcPresets,
+        aec_configs: aecConfigs,
+        network_configs: networkConfigs,
+      },
     };
   }
 
@@ -430,20 +440,6 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
   const createMutation = useMutation({
     mutationFn: () => createTestSuite(buildConfig()),
     onSuccess: () => onCreated(),
-  });
-
-  function toggleItem<T>(arr: T[], item: T, setter: (v: T[]) => void) {
-    setter(arr.includes(item) ? arr.filter((x) => x !== item) : [...arr, item]);
-  }
-
-  function hasKey(field: keyof KeyStatusResponse | null): boolean {
-    if (!field || !keys) return true;
-    return keys[field] ?? false;
-  }
-
-  const availableBackends = ALL_BACKENDS.filter((b) => {
-    if (b.pipeline === "both") return true;
-    return pipelines.includes(b.pipeline);
   });
 
   return (
@@ -468,9 +464,9 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
         </div>
       </div>
 
-      {/* Row 2: Audio Sources + Pipeline/Backends side by side */}
+      {/* Row 2: Audio Sources + Backends */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Audio Sources — filters */}
+        {/* Audio Sources */}
         <div className="bg-blue-50/60 rounded-lg p-4 border border-blue-100">
           <div className="flex items-center justify-between mb-3">
             <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wider">Audio Sources</h4>
@@ -482,19 +478,15 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
           </div>
           {audioSources.data ? (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              {/* Provider */}
               <FilterColumn label="PROVIDER" items={audioSources.data.providers}
                 selected={selectedProviders} onToggle={(v) => toggleItem(selectedProviders, v, setSelectedProviders)}
                 onClear={() => setSelectedProviders([])} />
-              {/* Category */}
               <FilterColumn label="CATEGORY" items={audioSources.data.categories}
                 selected={selectedCategories} onToggle={(v) => toggleItem(selectedCategories, v, setSelectedCategories)}
                 onClear={() => setSelectedCategories([])} formatLabel={(v) => v.replace(/_/g, " ")} />
-              {/* Language */}
               <FilterColumn label="LANGUAGE" items={audioSources.data.languages}
                 selected={selectedLanguages} onToggle={(v) => toggleItem(selectedLanguages, v, setSelectedLanguages)}
                 onClear={() => setSelectedLanguages([])} />
-              {/* Gender */}
               <FilterColumn label="GENDER" items={audioSources.data.genders}
                 selected={selectedGenders} onToggle={(v) => toggleItem(selectedGenders, v, setSelectedGenders)}
                 onClear={() => setSelectedGenders([])} />
@@ -502,102 +494,177 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
           ) : (
             <p className="text-xs text-gray-400">Loading...</p>
           )}
-          {(selectedProviders.length > 0 || selectedCategories.length > 0 || selectedLanguages.length > 0 || selectedGenders.length > 0) && (
-            <p className="mt-2 text-[10px] text-blue-600 border-t border-blue-200 pt-2">
-              Filters: {[
-                ...selectedProviders,
-                ...selectedCategories.map(c => c.replace(/_/g, " ")),
-                ...selectedLanguages,
-                ...selectedGenders,
-              ].join(", ")}
-            </p>
-          )}
         </div>
 
-        {/* Pipeline & Backends */}
-        <div className="space-y-3">
-          <div>
-            <SectionHeader title="Pipeline" />
-            <div className="space-y-1">
-              {PIPELINES.map((p) => (
-                <label key={p} className="flex items-center gap-2 text-xs text-gray-700">
-                  <input
-                    type="checkbox"
-                    checked={pipelines.includes(p)}
-                    onChange={() => toggleItem(pipelines, p, setPipelines)}
-                    className="rounded border-gray-300 h-3.5 w-3.5"
-                  />
-                  {p === "asr_text" ? "ASR → Text → LLM" : "Audio → LLM (direct)"}
-                </label>
-              ))}
-            </div>
-            {pipelines.includes("asr_text") && (
-              <div className="mt-1.5 pl-5 text-[10px] text-gray-400">
-                STT: {STT_BACKENDS.filter(s => !s.paid || hasKey(s.keyField)).map(s => s.label).join(" | ")}
-              </div>
-            )}
-          </div>
-
-          <div>
-            <SectionHeader title="LLM Backends" count={backends.length} />
-
-            {/* Local (Ollama) */}
-            {ollamaBackends.length > 0 && (
-              <div className="mb-2">
-                <p className="text-[10px] font-medium text-gray-400 mb-1">LOCAL (FREE)</p>
-                <div className="space-y-1">
-                  {ollamaBackends.filter(b => {
-                    if (b.pipeline === "both") return true;
-                    return pipelines.includes(b.pipeline);
-                  }).map((b) => (
-                    <label key={b.key} className="flex items-center gap-2 text-xs text-gray-700">
-                      <input
-                        type="checkbox"
-                        checked={backends.includes(b.key)}
-                        onChange={() => toggleItem(backends, b.key, setBackends)}
-                        className="rounded border-gray-300 h-3.5 w-3.5"
-                      />
-                      <span className="flex-1 truncate">{b.label}</span>
-                    </label>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Cloud APIs */}
-            <div>
-              <p className="text-[10px] font-medium text-gray-400 mb-1">CLOUD APIs</p>
+        {/* LLM Backends */}
+        <div>
+          <SectionHeader title="LLM Backends" count={backends.length} />
+          {ollamaBackends.length > 0 && (
+            <div className="mb-2">
+              <p className="text-[10px] font-medium text-gray-400 mb-1">LOCAL (FREE)</p>
               <div className="space-y-1">
-                {CLOUD_BACKENDS.filter(b => {
-                  if (b.pipeline === "both") return true;
-                  return pipelines.includes(b.pipeline);
-                }).map((b) => {
-                  const keyOk = hasKey(b.keyField);
-                  const disabled = b.paid && !keyOk;
-                  return (
-                    <label key={b.key} className={`flex items-center gap-2 text-xs ${disabled ? "text-red-400" : "text-gray-700"}`}>
-                      <input
-                        type="checkbox"
-                        checked={backends.includes(b.key)}
-                        onChange={() => toggleItem(backends, b.key, setBackends)}
-                        className="rounded border-gray-300 h-3.5 w-3.5"
-                        disabled={disabled}
-                      />
-                      <CostBadge paid={b.paid} hasKey={keyOk} />
-                      <span className={`flex-1 truncate ${disabled ? "line-through" : ""}`}>{b.label}</span>
-                    </label>
-                  );
-                })}
+                {ollamaBackends.map((b) => (
+                  <label key={b.key} className="flex items-center gap-2 text-xs text-gray-700">
+                    <input
+                      type="checkbox"
+                      checked={backends.includes(b.key)}
+                      onChange={() => toggleItem(backends, b.key, setBackends)}
+                      className="rounded border-gray-300 h-3.5 w-3.5"
+                    />
+                    <span className="flex-1 truncate">{b.label}</span>
+                  </label>
+                ))}
               </div>
+            </div>
+          )}
+          <div>
+            <p className="text-[10px] font-medium text-gray-400 mb-1">CLOUD APIs</p>
+            <div className="space-y-1">
+              {CLOUD_BACKENDS.map((b) => {
+                const keyOk = hasKey(b.keyField);
+                const disabled = b.paid && !keyOk;
+                return (
+                  <label key={b.key} className={`flex items-center gap-2 text-xs ${disabled ? "text-red-400" : "text-gray-700"}`}>
+                    <input
+                      type="checkbox"
+                      checked={backends.includes(b.key)}
+                      onChange={() => toggleItem(backends, b.key, setBackends)}
+                      className="rounded border-gray-300 h-3.5 w-3.5"
+                      disabled={disabled}
+                    />
+                    <CostBadge paid={b.paid} hasKey={keyOk} />
+                    <span className={`flex-1 truncate ${disabled ? "line-through" : ""}`}>{b.label}</span>
+                  </label>
+                );
+              })}
             </div>
           </div>
         </div>
       </div>
 
-      {/* Row 3: Audio Degradation — pill selectors */}
+      {/* Row 3: Telephony Signal Chain */}
+      <div className="bg-indigo-50/60 rounded-lg p-4 border border-indigo-100">
+        <h4 className="text-xs font-semibold text-indigo-700 uppercase tracking-wider mb-3">
+          Telephony Signal Chain
+        </h4>
+
+        <div className="space-y-3">
+          {/* BT Codec */}
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-600 w-28 shrink-0">BT Codec</span>
+            <PillSelect
+              options={BT_CODECS.map((c) => c.key)}
+              selected={btCodecs}
+              onToggle={(v) => toggleItem(btCodecs, v as string, setBtCodecs)}
+              format={(v) => BT_CODECS.find((c) => c.key === v)?.label ?? String(v)}
+            />
+          </div>
+
+          {/* AGC */}
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-gray-600 w-28 shrink-0">AGC Preset</span>
+            <PillSelect
+              options={AGC_PRESETS.map((p) => p.key)}
+              selected={agcPresets}
+              onToggle={(v) => toggleItem(agcPresets, v as string, setAgcPresets)}
+              format={(v) => AGC_PRESETS.find((p) => p.key === v)?.label ?? String(v)}
+            />
+          </div>
+
+          {/* AEC Residual */}
+          <div>
+            <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={aecEnabled}
+                onChange={(e) => setAecEnabled(e.target.checked)}
+                className="rounded border-gray-300 h-3.5 w-3.5"
+              />
+              <span className="font-medium">AEC Residual Simulation</span>
+            </label>
+            {aecEnabled && (
+              <div className="mt-2 ml-6 space-y-2">
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] text-gray-500 w-24 shrink-0">Suppression</span>
+                  <input
+                    type="range" min={-40} max={-5} step={1} value={aecSuppression}
+                    onChange={(e) => setAecSuppression(Number(e.target.value))}
+                    className="flex-1 h-1.5 accent-indigo-600"
+                  />
+                  <span className="text-[11px] text-gray-600 w-14 text-right tabular-nums">{aecSuppression} dB</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] text-gray-500 w-24 shrink-0">NLD Amount</span>
+                  <input
+                    type="range" min={0} max={1} step={0.05} value={aecNld}
+                    onChange={(e) => setAecNld(Number(e.target.value))}
+                    className="flex-1 h-1.5 accent-indigo-600"
+                  />
+                  <span className="text-[11px] text-gray-600 w-14 text-right tabular-nums">{aecNld.toFixed(2)}</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Network Degradation */}
+          <div>
+            <label className="flex items-center gap-2 text-xs text-gray-600 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={networkEnabled}
+                onChange={(e) => setNetworkEnabled(e.target.checked)}
+                className="rounded border-gray-300 h-3.5 w-3.5"
+              />
+              <span className="font-medium">Network Degradation</span>
+            </label>
+            {networkEnabled && (
+              <div className="mt-2 ml-6 space-y-2">
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] text-gray-500 w-24 shrink-0">Packet Loss</span>
+                  <input
+                    type="range" min={0} max={20} step={0.5} value={packetLoss}
+                    onChange={(e) => setPacketLoss(Number(e.target.value))}
+                    className="flex-1 h-1.5 accent-indigo-600"
+                  />
+                  <span className="text-[11px] text-gray-600 w-14 text-right tabular-nums">{packetLoss}%</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] text-gray-500 w-24 shrink-0">Loss Pattern</span>
+                  <PillSelect
+                    options={["random", "burst"]}
+                    selected={[packetLossPattern]}
+                    onToggle={(v) => setPacketLossPattern(v as string)}
+                    format={(v) => v === "burst" ? "Burst" : "Random"}
+                  />
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-[11px] text-gray-500 w-24 shrink-0">Jitter</span>
+                  <input
+                    type="range" min={0} max={100} step={5} value={jitterMs}
+                    onChange={(e) => setJitterMs(Number(e.target.value))}
+                    className="flex-1 h-1.5 accent-indigo-600"
+                  />
+                  <span className="text-[11px] text-gray-600 w-14 text-right tabular-nums">{jitterMs} ms</span>
+                </div>
+                <label className="flex items-center gap-2 text-[11px] text-gray-500 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={codecSwitching}
+                    onChange={(e) => setCodecSwitching(e.target.checked)}
+                    className="rounded border-gray-300 h-3 w-3"
+                  />
+                  Mid-call codec switching (CVSD ↔ mSBC)
+                </label>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Row 4: Cabin Audio Degradation */}
       <div>
         <div className="flex items-center gap-3 mb-3">
-          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Audio Degradation</h4>
+          <h4 className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Cabin Audio Degradation</h4>
           <button
             onClick={() => setShowAdvanced(!showAdvanced)}
             className="text-[10px] text-blue-500 hover:text-blue-700 font-medium"
@@ -607,7 +674,6 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
         </div>
 
         <div className="space-y-3">
-          {/* SNR */}
           <div className="flex items-center gap-3">
             <span className="text-xs text-gray-500 w-24 shrink-0">SNR (dB)</span>
             <PillSelect
@@ -618,18 +684,16 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
             />
           </div>
 
-          {/* Noise */}
           <div className="flex items-center gap-3">
             <span className="text-xs text-gray-500 w-24 shrink-0">Noise</span>
             <PillSelect
-              options={NOISE_SOURCES.map(s => s.key)}
+              options={NOISE_SOURCES.map((s) => s.key)}
               selected={noiseTypes}
               onToggle={(v) => toggleItem(noiseTypes, v as string, setNoiseTypes)}
-              format={(v) => NOISE_SOURCES.find(s => s.key === v)?.label ?? String(v)}
+              format={(v) => NOISE_SOURCES.find((s) => s.key === v)?.label ?? String(v)}
             />
           </div>
 
-          {/* Interferer Level — shown when secondary_voice or babble is selected */}
           {hasInterferer && (
             <div className="flex items-start gap-3">
               <span className="text-xs text-gray-500 w-24 shrink-0 pt-1">Interferer Level</span>
@@ -640,12 +704,11 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
                   onToggle={(v) => toggleItem(interfererLevels, v as number, setInterfererLevels)}
                   format={(v) => `${Number(v) > 0 ? "+" : ""}${v} dB`}
                 />
-                <p className="text-[10px] text-gray-400 mt-1">0 dB = same loudness as main talker. Negative = quieter, positive = louder.</p>
+                <p className="text-[10px] text-gray-400 mt-1">0 dB = same loudness as main talker.</p>
               </div>
             </div>
           )}
 
-          {/* Advanced: Speech Level, Echo */}
           {showAdvanced && (
             <>
               <div className="flex items-start gap-3">
@@ -683,7 +746,7 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
         </div>
       </div>
 
-      {/* Row 4: Actions */}
+      {/* Row 5: Actions */}
       <div className="flex items-center gap-3 border-t border-gray-100 pt-4">
         <button
           onClick={() => previewMutation.mutate()}
@@ -703,9 +766,9 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
         {preview && (
           <div className="ml-2 text-sm text-gray-600">
             <span className="font-semibold text-gray-900">{preview.total_cases.toLocaleString()}</span> cases
-            {preview.breakdown.speech_samples != null && (
+            {preview.breakdown.telephony_combos != null && preview.breakdown.telephony_combos > 0 && (
               <span className="ml-1.5 text-xs text-gray-400">
-                ({preview.breakdown.speech_samples} samples &times; {preview.breakdown.snr_levels} SNR &times; {preview.breakdown.noise_types} noise &times; {preview.breakdown.backends} backends)
+                ({preview.breakdown.speech_samples} samples &times; {preview.breakdown.snr_levels} SNR &times; {preview.breakdown.noise_types} noise &times; {preview.breakdown.backends} backends &times; {preview.breakdown.telephony_combos} telephony combos)
               </span>
             )}
           </div>

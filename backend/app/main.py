@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from .config import settings
-from .api import speech, tests, runs, results, ws, health
+from .api import speech, tests, runs, results, ws, health, cars
 from .api import settings as settings_router
 
 
@@ -25,6 +25,7 @@ async def lifespan(app: FastAPI):
     import backend.app.models.speech  # noqa: F401
     import backend.app.models.test  # noqa: F401
     import backend.app.models.run  # noqa: F401
+    import backend.app.models.car  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
@@ -55,6 +56,7 @@ app.include_router(results.router, prefix="/api/results", tags=["Results"])
 app.include_router(ws.router, prefix="/api/ws", tags=["WebSocket"])
 app.include_router(settings_router.router, prefix="/api/settings", tags=["Settings"])
 app.include_router(health.router, prefix="/api/health", tags=["Health"])
+app.include_router(cars.router, prefix="/api/cars", tags=["Cars"])
 
 
 @app.get("/api/ping")

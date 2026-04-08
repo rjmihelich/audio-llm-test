@@ -36,7 +36,11 @@ def _soft_clip(samples: np.ndarray, threshold: float = 0.95) -> np.ndarray:
     return out
 
 
-def mix_at_snr(speech: AudioBuffer, noise: AudioBuffer, snr_db: float) -> AudioBuffer:
+def mix_at_snr(
+    speech: AudioBuffer,
+    noise: AudioBuffer,
+    snr_db: float | None,
+) -> AudioBuffer:
     """Mix noise into speech at the specified SNR.
 
     SNR = 20 * log10(rms_speech / rms_noise)
@@ -50,12 +54,20 @@ def mix_at_snr(speech: AudioBuffer, noise: AudioBuffer, snr_db: float) -> AudioB
         speech: Clean speech audio (reference signal).
         noise: Noise audio (must be same length and sample rate as speech).
         snr_db: Target signal-to-noise ratio in dB. Lower values = more noise.
+            If None, noise is added at its original recorded level (for real
+            car recordings that should not be gain-adjusted).
     """
     if speech.sample_rate != noise.sample_rate:
         noise = noise.resample(speech.sample_rate)
 
     # Ensure same length
     noise_samples = noise.loop_to_length(speech.num_samples).samples
+
+    if snr_db is None:
+        # Direct mix — no gain applied to noise (real car recordings)
+        mixed = speech.samples + noise_samples
+        mixed = _soft_clip(mixed)
+        return AudioBuffer(samples=mixed, sample_rate=speech.sample_rate)
 
     speech_rms = speech.rms
     noise_rms = np.sqrt(np.mean(noise_samples**2))
@@ -70,6 +82,46 @@ def mix_at_snr(speech: AudioBuffer, noise: AudioBuffer, snr_db: float) -> AudioB
     mixed = speech.samples + scale * noise_samples
 
     # Soft-clip only if samples actually exceed bounds
+    mixed = _soft_clip(mixed)
+
+    return AudioBuffer(samples=mixed, sample_rate=speech.sample_rate)
+
+
+def mix_at_relative_level(
+    speech: AudioBuffer,
+    interferer: AudioBuffer,
+    level_db: float | None,
+) -> AudioBuffer:
+    """Mix an interfering signal into speech at a level relative to the speech RMS.
+
+    0 dB means the interferer is RMS-matched to the speech (same loudness).
+    Positive values make the interferer louder, negative values quieter.
+    None means muted (no interferer added).
+
+    Args:
+        speech: Clean speech audio (reference signal).
+        interferer: Interfering audio (secondary voice or babble).
+        level_db: Relative level in dB. 0=same RMS as speech. None=muted.
+    """
+    if level_db is None:
+        return speech
+
+    if speech.sample_rate != interferer.sample_rate:
+        interferer = interferer.resample(speech.sample_rate)
+
+    interferer_samples = interferer.loop_to_length(speech.num_samples).samples
+
+    speech_rms = speech.rms
+    interferer_rms = np.sqrt(np.mean(interferer_samples**2))
+
+    if interferer_rms <= 0 or speech_rms <= 0:
+        return speech
+
+    # Scale interferer to match speech RMS, then apply level offset
+    target_rms = speech_rms * (10 ** (level_db / 20.0))
+    scale = target_rms / interferer_rms
+
+    mixed = speech.samples + scale * interferer_samples
     mixed = _soft_clip(mixed)
 
     return AudioBuffer(samples=mixed, sample_rate=speech.sample_rate)

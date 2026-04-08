@@ -8,6 +8,8 @@ import TestSuites from "./pages/TestSuites";
 import RunMonitor from "./pages/RunMonitor";
 import Results from "./pages/Results";
 import RunsList from "./pages/RunsList";
+import TelephonySuites from "./pages/TelephonySuites";
+import TelephonyRuns from "./pages/TelephonyRuns";
 import Settings from "./pages/Settings";
 import AudioBrowser from "./pages/AudioBrowser";
 
@@ -15,8 +17,10 @@ const navItems = [
   { to: "/", label: "Dashboard", icon: "\u{1F4CA}" },
   { to: "/corpus", label: "Speech Corpus", icon: "\u{1F399}" },
   { to: "/browser", label: "Audio Browser", icon: "\u{1F50A}" },
-  { to: "/tests", label: "Test Suites", icon: "\u{1F9EA}" },
-  { to: "/runs", label: "Runs & Results", icon: "\u{1F3AF}" },
+  { to: "/tests", label: "LLM Test Suites", icon: "\u{1F9EA}" },
+  { to: "/runs", label: "LLM Results", icon: "\u{1F3AF}" },
+  { to: "/telephony", label: "Telephony Suites", icon: "\u{1F4DE}" },
+  { to: "/telephony-runs", label: "Telephony Results", icon: "\u{1F4F6}" },
   { to: "/settings", label: "Settings", icon: "\u{2699}" },
   { to: "/pipeline-studio", label: "Pipeline Studio", icon: "\u{1F527}", external: true, externalPath: "/pipeline-studio/" },
 ];
@@ -140,6 +144,8 @@ export default function App() {
           <Route path="/browser" element={<AudioBrowser />} />
           <Route path="/tests" element={<TestSuites />} />
           <Route path="/runs" element={<RunsList />} />
+          <Route path="/telephony" element={<TelephonySuites />} />
+          <Route path="/telephony-runs" element={<TelephonyRuns />} />
           <Route path="/runs/:id" element={<RunMonitor />} />
           <Route path="/results/:id" element={<Results />} />
           <Route path="/settings" element={<Settings />} />

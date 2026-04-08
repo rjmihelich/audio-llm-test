@@ -240,13 +240,20 @@ def noise_from_file(
     file_path: Path | str,
     target_num_samples: int,
     target_sample_rate: int = 16000,
+    preserve_level: bool = False,
 ) -> AudioBuffer:
     """Load noise from a WAV file, resample if needed, loop/truncate to target length.
 
-    The noise is RMS-normalized to unit RMS for consistent SNR mixing.
+    Args:
+        preserve_level: If True, keep the original recorded level (for real car
+            recordings that already contain the correct amplitude). If False,
+            RMS-normalize to unit RMS for SNR-calibrated mixing.
     """
     audio = load_audio(file_path, target_sample_rate)
     audio = audio.loop_to_length(target_num_samples)
+
+    if preserve_level:
+        return audio
 
     # Normalize to unit RMS
     rms = audio.rms
@@ -266,9 +273,20 @@ def generate_noise(
     """Dispatch noise generation by type.
 
     Centralized function so pipelines don't duplicate the switch logic.
-    Returns an RMS-normalized AudioBuffer.
+    Returns an RMS-normalized AudioBuffer for synthetic types, or a
+    level-preserved AudioBuffer for car noise files.
+
+    Car noise format: "car_file:<path>" — loads the file at its recorded
+    level (no RMS normalization). The mixer should add this signal
+    directly rather than scaling it to an SNR target.
     """
-    if noise_type in ("road_noise", "pink_lpf"):
+    if noise_type.startswith("car_file:"):
+        # Real car recording — preserve original level
+        from backend.app.config import settings
+        relative_path = noise_type.split(":", 1)[1]
+        car_path = settings.audio_storage_path / relative_path
+        return noise_from_file(car_path, num_samples, sample_rate, preserve_level=True)
+    elif noise_type in ("road_noise", "pink_lpf"):
         return pink_noise_filtered(
             duration_s, lpf_cutoff_hz=100.0, lpf_order=2,
             sample_rate=sample_rate, seed=seed,

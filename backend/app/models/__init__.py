@@ -15,6 +15,10 @@ from backend.app.models.run import (
     TestResult,
     TestRun,
 )
+from backend.app.models.car import (
+    Car,
+    CarNoiseFile,
+)
 
 __all__ = [
     "Base",
@@ -32,4 +36,7 @@ __all__ = [
     # Execution
     "TestRun",
     "TestResult",
+    # Cars
+    "Car",
+    "CarNoiseFile",
 ]

@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { listLLMRuns, launchRun, deleteRun, type RunResponse } from "../api/client";
+import { listTelephonyRuns, launchRun, deleteRun, type RunResponse } from "../api/client";
 
 function statusColor(status: string) {
   switch (status) {
@@ -36,12 +36,12 @@ function duration(run: RunResponse) {
   return `${(ms / 60000).toFixed(1)}m`;
 }
 
-export default function RunsList() {
+export default function TelephonyRuns() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { data: runs, isLoading } = useQuery({
-    queryKey: ["llmRuns"],
-    queryFn: listLLMRuns,
+    queryKey: ["telephonyRuns"],
+    queryFn: listTelephonyRuns,
     refetchInterval: 5000,
   });
 
@@ -57,7 +57,7 @@ export default function RunsList() {
 
   const deleteMut = useMutation({
     mutationFn: (runId: string) => deleteRun(runId),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["llmRuns"] }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["telephonyRuns"] }),
   });
 
   if (isLoading) {
@@ -74,18 +74,18 @@ export default function RunsList() {
   return (
     <div className="p-4 sm:p-6 lg:p-8 max-w-7xl mx-auto">
       <div className="mb-6">
-        <h2 className="text-2xl font-bold text-gray-900">LLM Results</h2>
+        <h2 className="text-2xl font-bold text-gray-900">Telephony Results</h2>
         <p className="text-sm text-gray-500 mt-1">
-          View completed test runs and their results. Click a run to see detailed analysis.
+          View telephony test runs and their results. Click a run to see detailed analysis.
         </p>
       </div>
 
       {(!runs || runs.length === 0) ? (
         <div className="bg-white rounded-xl border border-gray-200 shadow-sm p-12 text-center">
           <p className="text-gray-400 text-sm">
-            No test runs yet. Go to{" "}
-            <Link to="/tests" className="text-blue-600 hover:underline">
-              Test Suites
+            No telephony test runs yet. Go to{" "}
+            <Link to="/telephony" className="text-blue-600 hover:underline">
+              Telephony Suites
             </Link>{" "}
             to create and run a test.
           </p>
@@ -98,7 +98,6 @@ export default function RunsList() {
               className="bg-white rounded-xl border border-gray-200 shadow-sm hover:shadow-md transition-shadow"
             >
               <div className="p-4 sm:p-5 space-y-3 sm:space-y-0 sm:flex sm:items-center sm:gap-4">
-                {/* Status dot */}
                 <span
                   className={`w-3 h-3 rounded-full shrink-0 ${
                     run.status === "completed"
@@ -111,7 +110,6 @@ export default function RunsList() {
                   }`}
                 />
 
-                {/* Run info */}
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-gray-900">
@@ -126,7 +124,7 @@ export default function RunsList() {
                   <div className="flex flex-wrap items-center gap-2 sm:gap-4 mt-1 text-xs text-gray-500">
                     <span>Started: {formatDate(run.started_at)}</span>
                     <span>Duration: {duration(run)}</span>
-                    <span>Suite: {run.test_suite_id.slice(0, 8)}</span>
+                    <span>Suite: {run.suite_name || run.test_suite_id.slice(0, 8)}</span>
                   </div>
                   {run.error_message && (
                     <p className="mt-1 text-xs text-red-500 truncate max-w-lg" title={run.error_message}>
@@ -135,7 +133,6 @@ export default function RunsList() {
                   )}
                 </div>
 
-                {/* Stats */}
                 <div className="flex flex-wrap items-center gap-3 sm:gap-6 sm:shrink-0">
                   <div className="text-center">
                     <p className="text-lg font-bold text-gray-900">
@@ -154,7 +151,6 @@ export default function RunsList() {
                     <p className="text-[10px] text-gray-400 uppercase">Pass Rate</p>
                   </div>
 
-                  {/* Progress bar */}
                   <div className="w-full sm:w-24">
                     <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
                       <div
@@ -169,7 +165,6 @@ export default function RunsList() {
                     </p>
                   </div>
 
-                  {/* Action buttons */}
                   <div className="flex flex-wrap gap-1.5">
                     {run.status === "running" && (
                       <Link

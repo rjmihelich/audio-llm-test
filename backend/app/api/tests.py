@@ -32,6 +32,48 @@ class EchoProfileConfig(BaseModel):
     eq_chains: list[list[FilterSpecConfig]] = Field(default_factory=list)
 
 
+class AGCConfigRequest(BaseModel):
+    target_rms_db: float = -18.0
+    attack_ms: float = 50.0
+    release_ms: float = 200.0
+    max_gain_db: float = 30.0
+    compression_ratio: float = 4.0
+
+
+class AECResidualConfigRequest(BaseModel):
+    suppression_db: float = -25.0
+    residual_type: str = "mixed"
+    nonlinear_distortion: float = 0.3
+
+
+class NetworkConfigRequest(BaseModel):
+    packet_loss_pct: float = 0.0
+    packet_loss_pattern: str = "random"
+    burst_length_ms: float = 80.0
+    jitter_ms: float = 0.0
+    codec_switching: bool = False
+
+
+class TelephonyConfig(BaseModel):
+    """Telephony sweep dimensions — only used when telephony pipeline is selected."""
+    bt_codec_types: list[str] = Field(
+        default=["none"],
+        description='BT codec variants to sweep: "cvsd", "msbc", "none"',
+    )
+    agc_presets: list[str] = Field(
+        default=["off"],
+        description='AGC preset names: "off", "mild", "aggressive"',
+    )
+    aec_configs: list[AECResidualConfigRequest] = Field(
+        default_factory=list,
+        description="AEC residual configs to sweep. Empty = no AEC simulation.",
+    )
+    network_configs: list[NetworkConfigRequest] = Field(
+        default_factory=list,
+        description="Network degradation configs to sweep. Empty = no network impairment.",
+    )
+
+
 class SweepConfigRequest(BaseModel):
     name: str
     description: str = ""
@@ -41,6 +83,10 @@ class SweepConfigRequest(BaseModel):
         description="Speech gain levels in dB. 0=original, negative=quieter/whisper, positive=louder/shout/overload.",
     )
     noise_types: list[str] = Field(default=["pink_lpf"])
+    interferer_level_db_values: list[float | None] = Field(
+        default=[0.0],
+        description="Relative levels for speech interferer (secondary_voice/babble) in dB. 0=same as speech. null=muted. Only applied when noise_type is secondary_voice or babble.",
+    )
     echo: EchoProfileConfig = Field(default_factory=EchoProfileConfig)
     pipelines: list[str] = Field(default=["direct_audio", "asr_text"])
     llm_backends: list[str] = Field(default=[])
@@ -51,6 +97,10 @@ class SweepConfigRequest(BaseModel):
     corpus_categories: list[str] | None = None
     corpus_entry_ids: list[str] | None = None
     system_prompt: str = "You are a helpful in-car voice assistant."
+    telephony: TelephonyConfig | None = Field(
+        default=None,
+        description="Telephony sweep config. Required when 'telephony' is in pipelines.",
+    )
 
 
 class TestSuiteResponse(BaseModel):
@@ -60,6 +110,7 @@ class TestSuiteResponse(BaseModel):
     status: str
     total_cases: int
     created_at: str
+    telephony_enabled: bool = False
 
 
 class SweepPreview(BaseModel):
@@ -133,6 +184,9 @@ async def create_test_suite(
         [f.model_dump() for f in chain] for chain in config.echo.eq_chains
     ] if config.echo.eq_chains else []
 
+    telephony_enabled = "telephony" in config.pipelines
+    tel = config.telephony
+
     sweep = SweepConfig(
         test_suite_id=suite.id,
         snr_db_values=config.snr_db_values,
@@ -140,11 +194,26 @@ async def create_test_suite(
         delay_ms_values=config.echo.delay_ms_values,
         gain_db_values=config.echo.gain_db_values,
         noise_types=config.noise_types,
+        interferer_level_db_values=config.interferer_level_db_values,
         pipelines=config.pipelines,
         llm_backends=backends,
         eq_configs=eq_configs_data,
+        telephony_enabled=telephony_enabled,
+        bt_codec_types=tel.bt_codec_types if tel else None,
+        agc_configs=tel.agc_presets if tel else None,
+        aec_residual_configs=[c.model_dump() for c in tel.aec_configs] if tel and tel.aec_configs else None,
+        network_configs=[c.model_dump() for c in tel.network_configs] if tel and tel.network_configs else None,
     )
     session.add(sweep)
+
+    # Determine which noise types need interferer level sweep
+    interferer_noise_types = {"secondary_voice", "babble"}
+
+    # Telephony dimension iterables
+    tel_codecs = tel.bt_codec_types if tel else ["none"]
+    tel_agc_presets = tel.agc_presets if tel else ["off"]
+    tel_aec_configs = [c.model_dump() for c in tel.aec_configs] if tel and tel.aec_configs else [None]
+    tel_network_configs = [c.model_dump() for c in tel.network_configs] if tel and tel.network_configs else [None]
 
     # Build cartesian product and create test cases
     total_cases = 0
@@ -158,39 +227,73 @@ async def create_test_suite(
         config.pipelines,
         backends,
     ):
-        # Deterministic hash (includes suite ID for cross-suite uniqueness)
-        hash_input = json.dumps(
-            {
-                "test_suite_id": str(suite.id),
-                "speech_sample_id": str(sample.id),
-                "snr_db": snr,
-                "speech_level_db": speech_level,
-                "noise_type": noise,
-                "delay_ms": delay,
-                "gain_db": gain,
-                "pipeline": pipeline,
-                "llm_backend": backend,
-            },
-            sort_keys=True,
-        )
-        deterministic_hash = hashlib.sha256(hash_input.encode()).hexdigest()
+        # For interferer noise types, sweep over interferer_level_db_values
+        # For other noise types, just use None (no interferer)
+        if noise in interferer_noise_types:
+            level_values = config.interferer_level_db_values
+        else:
+            level_values = [None]
 
-        test_case = TestCase(
-            test_suite_id=suite.id,
-            speech_sample_id=sample.id,
-            snr_db=snr,
-            speech_level_db=speech_level,
-            delay_ms=delay,
-            gain_db=gain,
-            noise_type=noise,
-            eq_config_json=None,
-            pipeline=pipeline,
-            llm_backend=backend,
-            status="pending",
-            deterministic_hash=deterministic_hash,
-        )
-        session.add(test_case)
-        total_cases += 1
+        for interferer_level in level_values:
+            # For telephony pipeline, add telephony dimensions to cartesian product
+            if pipeline == "telephony":
+                telephony_combos = [
+                    (codec, agc, aec, net)
+                    for codec in tel_codecs
+                    for agc in tel_agc_presets
+                    for aec in tel_aec_configs
+                    for net in tel_network_configs
+                ]
+            else:
+                telephony_combos = [(None, None, None, None)]
+
+            for bt_codec, agc_preset, aec_cfg, net_cfg in telephony_combos:
+                # Build agc_config_json from preset name
+                agc_config_json = {"preset": agc_preset} if agc_preset else None
+
+                # Deterministic hash (includes suite ID for cross-suite uniqueness)
+                hash_input = json.dumps(
+                    {
+                        "test_suite_id": str(suite.id),
+                        "speech_sample_id": str(sample.id),
+                        "snr_db": snr,
+                        "speech_level_db": speech_level,
+                        "noise_type": noise,
+                        "interferer_level_db": interferer_level,
+                        "delay_ms": delay,
+                        "gain_db": gain,
+                        "pipeline": pipeline,
+                        "llm_backend": backend,
+                        "bt_codec": bt_codec,
+                        "agc_preset": agc_preset,
+                        "aec_config": aec_cfg,
+                        "network_config": net_cfg,
+                    },
+                    sort_keys=True,
+                )
+                deterministic_hash = hashlib.sha256(hash_input.encode()).hexdigest()
+
+                test_case = TestCase(
+                    test_suite_id=suite.id,
+                    speech_sample_id=sample.id,
+                    snr_db=snr,
+                    speech_level_db=speech_level,
+                    delay_ms=delay,
+                    gain_db=gain,
+                    noise_type=noise,
+                    interferer_level_db=interferer_level,
+                    eq_config_json=None,
+                    pipeline=pipeline,
+                    llm_backend=backend,
+                    status="pending",
+                    deterministic_hash=deterministic_hash,
+                    bt_codec=bt_codec,
+                    agc_config_json=agc_config_json,
+                    aec_residual_config_json=aec_cfg,
+                    network_config_json=net_cfg,
+                )
+                session.add(test_case)
+                total_cases += 1
 
     # Update suite status
     suite.status = "ready"
@@ -203,7 +306,16 @@ async def create_test_suite(
         status=suite.status,
         total_cases=total_cases,
         created_at=suite.created_at.isoformat(),
+        telephony_enabled=telephony_enabled,
     )
+
+
+def _suite_telephony_enabled(suite: TestSuite) -> bool:
+    """Check if any sweep config on this suite has telephony_enabled=True."""
+    for sc in suite.sweep_configs:
+        if getattr(sc, "telephony_enabled", False):
+            return True
+    return False
 
 
 @router.get("/suites", response_model=list[TestSuiteResponse])
@@ -230,6 +342,7 @@ async def list_test_suites(session: AsyncSession = Depends(get_session)):
                 status=suite.status,
                 total_cases=case_count,
                 created_at=suite.created_at.isoformat(),
+                telephony_enabled=_suite_telephony_enabled(suite),
             )
         )
 
@@ -322,6 +435,7 @@ async def get_test_suite(
         status=suite.status,
         total_cases=case_count,
         created_at=suite.created_at.isoformat(),
+        telephony_enabled=_suite_telephony_enabled(suite),
     )
 
 
@@ -336,11 +450,26 @@ async def preview_sweep(
     """
     n_snr = len(config.snr_db_values)
     n_speech_level = len(config.speech_level_db_values)
-    n_noise = len(config.noise_types)
     n_delay = len(config.echo.delay_ms_values)
     n_gain = len(config.echo.gain_db_values)
-    n_pipelines = len(config.pipelines)
     n_backends = len(config.llm_backends) or 1
+    n_interferer_levels = len(config.interferer_level_db_values)
+
+    # Noise types that use interferer level sweep vs those that don't
+    interferer_noise_types = {"secondary_voice", "babble"}
+    n_interferer_noises = sum(1 for n in config.noise_types if n in interferer_noise_types)
+    n_regular_noises = len(config.noise_types) - n_interferer_noises
+
+    # Telephony dimensions (only for telephony pipeline cases)
+    tel = config.telephony
+    n_tel_codecs = len(tel.bt_codec_types) if tel else 1
+    n_tel_agc = len(tel.agc_presets) if tel else 1
+    n_tel_aec = max(len(tel.aec_configs), 1) if tel else 1
+    n_tel_net = max(len(tel.network_configs), 1) if tel else 1
+    n_tel_combos = n_tel_codecs * n_tel_agc * n_tel_aec * n_tel_net
+
+    n_telephony_pipelines = sum(1 for p in config.pipelines if p == "telephony")
+    n_other_pipelines = len(config.pipelines) - n_telephony_pipelines
 
     # Count ready speech samples matching filters
     from backend.app.models.speech import CorpusEntry, Voice
@@ -379,19 +508,31 @@ async def preview_sweep(
     count_result = await session.execute(sample_stmt)
     n_speech = count_result.scalar() or 0
 
-    total = n_speech * n_snr * n_speech_level * n_noise * n_delay * n_gain * n_pipelines * n_backends
+    # Cases per noise combo (non-telephony pipelines)
+    base_per_noise = n_speech * n_snr * n_speech_level * n_delay * n_gain * n_backends
+    other_cases = base_per_noise * n_other_pipelines * (
+        n_regular_noises + n_interferer_noises * n_interferer_levels
+    )
+    # Cases per noise combo (telephony pipeline — adds telephony dimensions)
+    telephony_cases = base_per_noise * n_telephony_pipelines * (
+        n_regular_noises + n_interferer_noises * n_interferer_levels
+    ) * n_tel_combos
+
+    total = other_cases + telephony_cases
 
     return SweepPreview(
         total_cases=total,
         breakdown={
             "snr_levels": n_snr,
             "speech_levels": n_speech_level,
-            "noise_types": n_noise,
+            "noise_types": len(config.noise_types),
+            "interferer_levels": n_interferer_levels,
             "echo_delays": n_delay,
             "echo_gains": n_gain,
-            "pipelines": n_pipelines,
+            "pipelines": len(config.pipelines),
             "backends": n_backends,
             "speech_samples": n_speech,
+            "telephony_combos": n_tel_combos if n_telephony_pipelines > 0 else 0,
         },
     )
 

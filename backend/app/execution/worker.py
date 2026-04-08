@@ -303,7 +303,7 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
 
             # 7. Initialize ASR backend if any test case uses asr_text pipeline
             asr_backend = None
-            asr_needed = any(tc.pipeline == "asr_text" for tc in test_cases)
+            asr_needed = any(tc.pipeline in ("asr_text", "telephony") for tc in test_cases)
             if not asr_needed:
                 await broadcast_progress(run_id, {"type": "info", "message": "No ASR pipeline cases — skipping STT init"})
             if asr_needed:
@@ -334,10 +334,69 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
 
             # 8. Convert TestCase DB objects to TestCaseConfig
             await broadcast_progress(run_id, {"type": "info", "message": f"Preparing {len(test_cases)} test configurations..."})
+
+            # Pre-fetch all ready speech samples for secondary_voice/babble selection
+            interferer_needed = any(
+                tc.noise_type in ("secondary_voice", "babble") for tc in test_cases
+            )
+            all_ready_samples: list[SpeechSample] = []
+            if interferer_needed:
+                ready_result = await session.execute(
+                    select(SpeechSample).where(SpeechSample.status == "ready")
+                )
+                all_ready_samples = list(ready_result.scalars().all())
+                await broadcast_progress(run_id, {
+                    "type": "info",
+                    "message": f"Loaded {len(all_ready_samples)} speech samples for interferer selection",
+                })
+
+            import random as _random
+
             test_case_configs: list[TestCaseConfig] = []
             for tc in test_cases:
                 speech_sample = await session.get(SpeechSample, tc.speech_sample_id)
                 corpus_entry = await session.get(CorpusEntry, speech_sample.corpus_entry_id) if speech_sample else None
+
+                noise_type = tc.noise_type or "pink_lpf"
+                noise_file = None
+                interferer_files = None
+                interferer_level_db = getattr(tc, "interferer_level_db", None)
+
+                if noise_type in ("secondary_voice", "babble") and all_ready_samples and speech_sample:
+                    candidates = [
+                        s for s in all_ready_samples
+                        if s.corpus_entry_id != speech_sample.corpus_entry_id
+                        and s.file_path
+                    ]
+
+                    if noise_type == "secondary_voice" and candidates:
+                        # Pick 1 random utterance different from stimulus
+                        chosen = _random.choice(candidates)
+                        interferer_files = [chosen.file_path]
+                        if interferer_level_db is None:
+                            interferer_level_db = 0.0  # Default: same level as speech
+                    elif noise_type == "babble" and len(candidates) >= 6:
+                        # Pick 6 random utterances, all different corpus entries
+                        seen_entries = set()
+                        picked = []
+                        _random.shuffle(candidates)
+                        for s in candidates:
+                            if s.corpus_entry_id not in seen_entries:
+                                picked.append(s)
+                                seen_entries.add(s.corpus_entry_id)
+                            if len(picked) >= 6:
+                                break
+                        interferer_files = [s.file_path for s in picked]
+                        if interferer_level_db is None:
+                            interferer_level_db = 0.0
+
+                    # Use silence for the noise channel — interferer handles the sound
+                    noise_type = "silence"
+
+                # Extract agc_preset from agc_config_json {"preset": "mild"} format
+                agc_preset = None
+                if getattr(tc, "agc_config_json", None):
+                    agc_preset = tc.agc_config_json.get("preset")
 
                 config = TestCaseConfig(
                     id=str(tc.id),
@@ -347,12 +406,19 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                     expected_action=corpus_entry.expected_action if corpus_entry else None,
                     snr_db=tc.snr_db if tc.snr_db is not None else 10.0,
                     speech_level_db=getattr(tc, "speech_level_db", None) or 0.0,
-                    noise_type=tc.noise_type or "pink_lpf",
+                    noise_type=noise_type,
+                    noise_file=noise_file,
+                    interferer_level_db=interferer_level_db,
+                    interferer_files=interferer_files,
                     delay_ms=tc.delay_ms if tc.delay_ms is not None else 0.0,
                     gain_db=tc.gain_db if tc.gain_db is not None else -100.0,
                     eq_config=tc.eq_config_json,
                     pipeline=tc.pipeline,
                     llm_backend=tc.llm_backend,
+                    bt_codec=getattr(tc, "bt_codec", None),
+                    agc_preset=agc_preset,
+                    aec_residual_config=getattr(tc, "aec_residual_config_json", None),
+                    network_config=getattr(tc, "network_config_json", None),
                 )
                 test_case_configs.append(config)
 

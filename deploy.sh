@@ -40,6 +40,31 @@ if [[ "${1:-}" == "--status" ]]; then
     exit 0
 fi
 
+# ---- Purge results mode ----
+if [[ "${1:-}" == "--purge-results" ]]; then
+    echo -e "\n${BOLD}═══ Purging test results & runs ═══${NC}"
+    warn "This will delete ALL test_results, test_runs, and degraded audio files."
+    warn "Test suites, cases, speech samples, and corpus entries are preserved."
+    read -p "Type 'yes' to confirm: " CONFIRM
+    if [[ "$CONFIRM" != "yes" ]]; then
+        err "Aborted."
+        exit 1
+    fi
+    log "Deleting test_results..."
+    docker compose exec -T db psql -U postgres -d audio_llm_test -c "DELETE FROM test_results;"
+    log "Deleting test_runs..."
+    docker compose exec -T db psql -U postgres -d audio_llm_test -c "DELETE FROM test_runs;"
+    log "Cleaning degraded audio files..."
+    docker compose exec -T worker rm -rf /app/storage/audio/degraded/ 2>/dev/null || true
+    log "Flushing worker state from Redis..."
+    docker compose exec -T redis redis-cli DEL worker:activity worker:heartbeat worker:recent_errors worker:error_budget watchdog:report 2>/dev/null || true
+    docker compose exec -T redis redis-cli DEL worker:log 2>/dev/null || true
+    ok "Done! All results purged. Suites, cases, and speech samples intact."
+    echo ""
+    docker compose exec -T db psql -U postgres -d audio_llm_test -c "SELECT 'test_results' as tbl, COUNT(*) FROM test_results UNION ALL SELECT 'test_runs', COUNT(*) FROM test_runs UNION ALL SELECT 'test_suites', COUNT(*) FROM test_suites UNION ALL SELECT 'test_cases', COUNT(*) FROM test_cases UNION ALL SELECT 'speech_samples', COUNT(*) FROM speech_samples;"
+    exit 0
+fi
+
 FORCE_REBUILD=false
 if [[ "${1:-}" == "--full" ]]; then
     FORCE_REBUILD=true

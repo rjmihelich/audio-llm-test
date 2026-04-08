@@ -211,12 +211,13 @@ export default function Results() {
 // Results Tab — detailed test-by-test view
 // ---------------------------------------------------------------------------
 
-function AudioButton({ label, url, color }: { label: string; url: string; color: string }) {
+function AudioButton({ label, url, color, disabled = false }: { label: string; url: string; color: string; disabled?: boolean }) {
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState(false);
 
   const play = (e: React.MouseEvent) => {
     e.stopPropagation();
+    if (disabled) return;
     setError(false);
     const audio = new Audio(url);
     audio.onplay = () => setPlaying(true);
@@ -225,19 +226,23 @@ function AudioButton({ label, url, color }: { label: string; url: string; color:
     audio.play().catch(() => { setPlaying(false); setError(true); });
   };
 
+  const isDisabled = disabled || playing;
+
   return (
     <button
       onClick={play}
-      disabled={playing}
+      disabled={isDisabled}
       className={`px-2.5 py-1 text-[11px] font-medium rounded-lg border transition-colors ${
-        error
-          ? "border-gray-200 text-gray-400 cursor-not-allowed"
-          : playing
-            ? `${color} text-white`
-            : `border-gray-200 text-gray-600 hover:${color} hover:text-white`
+        disabled
+          ? "border-gray-200 text-gray-300 cursor-not-allowed"
+          : error
+            ? "border-gray-200 text-gray-400 cursor-not-allowed"
+            : playing
+              ? `${color} text-white`
+              : `border-gray-200 text-gray-600 hover:${color} hover:text-white`
       }`}
     >
-      {playing ? "..." : error ? `${label} (n/a)` : label}
+      {disabled ? `${label} (n/a)` : playing ? "..." : error ? `${label} (n/a)` : label}
     </button>
   );
 }
@@ -550,8 +555,8 @@ function ResultsTab({ results, runId }: { results: ResultResponse[]; runId: stri
                   <div className="mt-4 flex items-center gap-2 border-t border-gray-100 pt-3">
                     <span className="text-[10px] text-gray-400 uppercase font-semibold mr-1">Audio</span>
                     <AudioButton label="Clean" url={getAudioUrl(runId, r.test_case_id, "clean")} color="bg-blue-600" />
-                    <AudioButton label="Degraded" url={getAudioUrl(runId, r.test_case_id, "degraded")} color="bg-amber-600" />
-                    <AudioButton label="Echo" url={getAudioUrl(runId, r.test_case_id, "echo")} color="bg-purple-600" />
+                    <AudioButton label="Degraded" url={getAudioUrl(runId, r.test_case_id, "degraded")} color="bg-amber-600" disabled={!r.has_degraded_audio} />
+                    <AudioButton label="Echo" url={getAudioUrl(runId, r.test_case_id, "echo")} color="bg-purple-600" disabled={!r.has_degraded_audio} />
                   </div>
 
                   {r.error && (

@@ -28,6 +28,7 @@ export interface TestSuiteResponse {
   status: string;
   total_cases: number;
   created_at: string;
+  telephony_enabled: boolean;
 }
 
 export interface SweepPreview {
@@ -107,6 +108,28 @@ export interface ResultResponse {
   error_stage: string | null;
   has_degraded_audio: boolean;
   created_at: string | null;
+  telephony_metadata?: Record<string, unknown> | null;
+}
+
+export interface AECResidualConfigRequest {
+  suppression_db: number;
+  residual_type: string;
+  nonlinear_distortion: number;
+}
+
+export interface NetworkConfigRequest {
+  packet_loss_pct: number;
+  packet_loss_pattern: string;
+  burst_length_ms: number;
+  jitter_ms: number;
+  codec_switching: boolean;
+}
+
+export interface TelephonyConfig {
+  bt_codec_types: string[];
+  agc_presets: string[];
+  aec_configs: AECResidualConfigRequest[];
+  network_configs: NetworkConfigRequest[];
 }
 
 export interface SweepConfigRequest {
@@ -115,6 +138,7 @@ export interface SweepConfigRequest {
   snr_db_values: number[];
   speech_level_db_values?: number[];
   noise_types: string[];
+  interferer_level_db_values?: (number | null)[];
   echo: {
     delay_ms_values: number[];
     gain_db_values: number[];
@@ -129,6 +153,7 @@ export interface SweepConfigRequest {
   corpus_categories?: string[];
   corpus_entry_ids?: string[];
   system_prompt?: string;
+  telephony?: TelephonyConfig;
 }
 
 export interface AudioSourcesResponse {
@@ -408,6 +433,16 @@ export function listTestSuites(): Promise<TestSuiteResponse[]> {
   return request("/tests/suites");
 }
 
+export async function listLLMTestSuites(): Promise<TestSuiteResponse[]> {
+  const all = await listTestSuites();
+  return all.filter((s) => !s.telephony_enabled);
+}
+
+export async function listTelephonySuites(): Promise<TestSuiteResponse[]> {
+  const all = await listTestSuites();
+  return all.filter((s) => s.telephony_enabled);
+}
+
 export function fetchAudioSources(): Promise<AudioSourcesResponse> {
   return request("/tests/suites/audio-sources");
 }
@@ -439,6 +474,18 @@ export function launchRun(
 
 export function listRuns(): Promise<RunResponse[]> {
   return request("/runs");
+}
+
+export async function listLLMRuns(): Promise<RunResponse[]> {
+  const [runs, telSuites] = await Promise.all([listRuns(), listTelephonySuites()]);
+  const telSuiteIds = new Set(telSuites.map((s) => s.id));
+  return runs.filter((r) => !telSuiteIds.has(r.test_suite_id));
+}
+
+export async function listTelephonyRuns(): Promise<RunResponse[]> {
+  const [runs, telSuites] = await Promise.all([listRuns(), listTelephonySuites()]);
+  const telSuiteIds = new Set(telSuites.map((s) => s.id));
+  return runs.filter((r) => telSuiteIds.has(r.test_suite_id));
 }
 
 export function getRun(runId: string): Promise<RunResponse> {

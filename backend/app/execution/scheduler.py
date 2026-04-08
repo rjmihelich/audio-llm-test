@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+import numpy as np
+
 from ..audio.types import AudioBuffer, FilterSpec
 from ..audio.echo import EchoConfig
 from ..audio.io import load_audio
@@ -18,6 +20,7 @@ from ..llm.base import LLMBackend, ASRBackend, RateLimitConfig
 from ..pipeline.base import PipelineInput, PipelineResult
 from ..pipeline.direct_audio import DirectAudioPipeline
 from ..pipeline.asr_text import ASRTextPipeline
+from ..pipeline.telephony import TelephonyPipeline
 from ..evaluation.base import Evaluator, EvaluationResult
 from .rate_limiter import TokenBucketRateLimiter
 
@@ -102,16 +105,24 @@ class TestCaseConfig:
     speech_level_db: float = 0.0  # Digital gain on speech before mixing. 0=original.
     noise_type: str = "pink_lpf"
     noise_file: str | None = None
+    interferer_level_db: float | None = None  # Relative level for secondary_voice/babble. 0=same as speech. None=muted.
+    interferer_files: list[str] | None = None  # Multiple files for babble (6 utterances)
     delay_ms: float = 0.0
     gain_db: float = -100.0  # -100 dB = no echo
     eq_config: list[dict] | None = None
-    pipeline: str = "direct_audio"  # or "asr_text"
+    pipeline: str = "direct_audio"  # "direct_audio", "asr_text", or "telephony"
     llm_backend: str = ""
     system_prompt: str = (
         "You are an in-car voice assistant. Respond ONLY with a short action command. "
         "Examples: navigate, distance_query, poi_search, route_query, play_music, set_temperature, call_contact. "
         "Do NOT explain, ask questions, or give conversational responses. Just output the action word."
     )
+
+    # Telephony-specific parameters (only used when pipeline == "telephony")
+    bt_codec: str | None = None          # "cvsd", "msbc", or "none"
+    agc_preset: str | None = None        # "off", "mild", "aggressive"
+    aec_residual_config: dict | None = None   # Serialized AECResidualConfig
+    network_config: dict | None = None   # Serialized NetworkConfig
 
     @property
     def deterministic_hash(self) -> str:
@@ -121,11 +132,16 @@ class TestCaseConfig:
             "snr_db": self.snr_db,
             "speech_level_db": self.speech_level_db,
             "noise_type": self.noise_type,
+            "interferer_level_db": self.interferer_level_db,
             "delay_ms": self.delay_ms,
             "gain_db": self.gain_db,
             "eq_config": self.eq_config,
             "pipeline": self.pipeline,
             "llm_backend": self.llm_backend,
+            "bt_codec": self.bt_codec,
+            "agc_preset": self.agc_preset,
+            "aec_residual_config": self.aec_residual_config,
+            "network_config": self.network_config,
         }, sort_keys=True)
         return hashlib.sha256(key.encode()).hexdigest()[:16]
 
@@ -299,6 +315,38 @@ class TestScheduler:
             system_prompt=case.system_prompt,
         )
 
+        # Build interferer AudioBuffer if speech interferer files are specified
+        interferer_audio = None
+        if case.interferer_files and case.interferer_level_db is not None:
+            # Babble: load multiple files, sum, normalize to single-talker RMS
+            try:
+                buffers = [load_audio(f, target_sample_rate=16000) for f in case.interferer_files]
+                if buffers:
+                    max_len = max(b.num_samples for b in buffers)
+                    mixed = np.zeros(max_len, dtype=np.float64)
+                    # Measure average single-talker RMS before summing
+                    single_rms_values = []
+                    for b in buffers:
+                        b = b.loop_to_length(max_len)
+                        r = b.rms
+                        if r > 0:
+                            single_rms_values.append(r)
+                        mixed += b.samples
+                    # Normalize sum to average single-talker RMS
+                    avg_single_rms = np.mean(single_rms_values) if single_rms_values else 1.0
+                    sum_rms = np.sqrt(np.mean(mixed**2))
+                    if sum_rms > 0:
+                        mixed *= avg_single_rms / sum_rms
+                    interferer_audio = AudioBuffer(samples=mixed, sample_rate=16000)
+            except Exception as e:
+                logger.warning(f"Failed to load babble interferer files: {e}")
+        elif case.noise_file and case.interferer_level_db is not None:
+            # Secondary voice: single file
+            try:
+                interferer_audio = load_audio(case.noise_file, target_sample_rate=16000)
+            except Exception as e:
+                logger.warning(f"Failed to load secondary voice file: {e}")
+
         # Execute with rate limiting
         async with rate_limiter:
             if case.pipeline == "direct_audio":
@@ -306,7 +354,9 @@ class TestScheduler:
                     llm_backend=backend,
                     snr_db=case.snr_db,
                     noise_type=case.noise_type,
-                    noise_file=case.noise_file,
+                    noise_file=case.noise_file if not interferer_audio else None,
+                    interferer=interferer_audio,
+                    interferer_level_db=case.interferer_level_db,
                     echo_config=echo_config,
                 )
             elif case.pipeline == "asr_text":
@@ -323,8 +373,59 @@ class TestScheduler:
                     llm_backend=backend,
                     snr_db=case.snr_db,
                     noise_type=case.noise_type,
-                    noise_file=case.noise_file,
+                    noise_file=case.noise_file if not interferer_audio else None,
+                    interferer=interferer_audio,
+                    interferer_level_db=case.interferer_level_db,
                     echo_config=echo_config,
+                )
+            elif case.pipeline == "telephony":
+                from ..audio.telephony_chain import TelephonyChainConfig
+                from ..audio.codec import CodecConfig, CodecType
+                from ..audio.agc import AGC_PRESETS, AGCConfig
+                from ..audio.aec import AECResidualConfig
+                from ..audio.network import NetworkConfig
+
+                # Build codec config
+                codec_type = CodecType(case.bt_codec) if case.bt_codec else CodecType.none
+                codec_cfg = CodecConfig(codec_type=codec_type)
+
+                # Build AGC config from preset name
+                agc_preset = case.agc_preset or "off"
+                agc_cfg = AGC_PRESETS.get(agc_preset)
+
+                # Build AEC config from dict
+                aec_cfg = None
+                if case.aec_residual_config:
+                    try:
+                        aec_cfg = AECResidualConfig(**case.aec_residual_config)
+                    except Exception:
+                        pass
+
+                # Build network config from dict
+                net_cfg = None
+                if case.network_config:
+                    try:
+                        net_cfg = NetworkConfig(**case.network_config)
+                    except Exception:
+                        pass
+
+                chain_config = TelephonyChainConfig(
+                    snr_db=case.snr_db,
+                    noise_type=case.noise_type,
+                    noise_file=case.noise_file,
+                    speech_level_db=case.speech_level_db,
+                    echo_config=echo_config,
+                    aec_config=aec_cfg,
+                    agc_config=agc_cfg,
+                    codec_config=codec_cfg,
+                    network_config=net_cfg,
+                    interferer=interferer_audio,
+                    interferer_level_db=case.interferer_level_db,
+                )
+                pipeline = TelephonyPipeline(
+                    llm_backend=backend,
+                    chain_config=chain_config,
+                    asr_backend=self._asr,
                 )
             elif str(case.pipeline).startswith("custom:"):
                 # Custom graph pipeline from pipeline-studio
