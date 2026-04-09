@@ -1294,21 +1294,14 @@ async def sample_filters(session: AsyncSession = Depends(get_session)):
     )
     statuses_q = select(distinct(SpeechSample.status))
 
-    (
-        providers_res,
-        genders_res,
-        languages_res,
-        accents_res,
-        categories_res,
-        statuses_res,
-    ) = await asyncio.gather(
-        session.execute(providers_q),
-        session.execute(genders_q),
-        session.execute(languages_q),
-        session.execute(accents_q),
-        session.execute(categories_q),
-        session.execute(statuses_q),
-    )
+    # Run sequentially — asyncio.gather on the same session causes
+    # concurrent access errors with async SQLAlchemy sessions.
+    providers_res = await session.execute(providers_q)
+    genders_res = await session.execute(genders_q)
+    languages_res = await session.execute(languages_q)
+    accents_res = await session.execute(accents_q)
+    categories_res = await session.execute(categories_q)
+    statuses_res = await session.execute(statuses_q)
 
     def _vals(result):
         return sorted(
