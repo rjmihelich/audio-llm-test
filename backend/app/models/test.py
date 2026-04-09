@@ -205,5 +205,5 @@ class TestCase(Base):
 
     # Relationships
     test_suite: Mapped["TestSuite"] = relationship(back_populates="test_cases", lazy="selectin")
-    speech_sample: Mapped["SpeechSample"] = relationship(lazy="selectin")
+    speech_sample: Mapped["SpeechSample"] = relationship(foreign_keys=[speech_sample_id], lazy="selectin")
     results: Mapped[list["TestResult"]] = relationship(back_populates="test_case", lazy="selectin")
