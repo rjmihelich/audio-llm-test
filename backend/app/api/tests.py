@@ -13,6 +13,7 @@ from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.base import get_session
+from backend.app.models.prompt import Prompt
 from backend.app.models.speech import SpeechSample
 from backend.app.models.test import SweepConfig, TestCase, TestSuite
 
@@ -117,6 +118,10 @@ class SweepConfigRequest(BaseModel):
     corpus_categories: list[str] | None = None
     corpus_entry_ids: list[str] | None = None
     system_prompt: str = "You are a helpful in-car voice assistant."
+    prompt_id: str | None = Field(
+        default=None,
+        description="ID of a saved prompt from the library. If provided, overrides system_prompt.",
+    )
     max_samples: int | None = Field(
         default=None,
         description="Cap the number of speech samples used. None = use all matching samples.",
@@ -135,6 +140,8 @@ class TestSuiteResponse(BaseModel):
     total_cases: int
     created_at: str
     telephony_enabled: bool = False
+    prompt_id: str | None = None
+    system_prompt: str | None = None
 
 
 class SweepPreview(BaseModel):
@@ -197,11 +204,23 @@ async def create_test_suite(
         import random
         samples = random.sample(samples, config.max_samples)
 
+    # Resolve system prompt: saved prompt takes precedence over inline text
+    resolved_prompt_id = None
+    resolved_system_prompt = config.system_prompt
+    if config.prompt_id:
+        saved = await session.get(Prompt, uuid.UUID(config.prompt_id))
+        if not saved:
+            raise HTTPException(404, f"Prompt {config.prompt_id} not found")
+        resolved_system_prompt = saved.content
+        resolved_prompt_id = saved.id
+
     # Create test suite
     suite = TestSuite(
         name=config.name,
         description=config.description or "",
         status="draft",
+        prompt_id=resolved_prompt_id,
+        system_prompt=resolved_system_prompt,
     )
     session.add(suite)
     await session.flush()  # get suite.id
@@ -328,6 +347,7 @@ async def create_test_suite(
                     eq_config_json=None,
                     pipeline=pipeline,
                     llm_backend=backend,
+                    system_prompt=resolved_system_prompt,
                     status="pending",
                     deterministic_hash=deterministic_hash,
                     bt_codec=bt_codec,
@@ -353,6 +373,8 @@ async def create_test_suite(
         total_cases=total_cases,
         created_at=suite.created_at.isoformat(),
         telephony_enabled=telephony_enabled,
+        prompt_id=str(suite.prompt_id) if suite.prompt_id else None,
+        system_prompt=suite.system_prompt,
     )
 
 
@@ -389,6 +411,8 @@ async def list_test_suites(session: AsyncSession = Depends(get_session)):
                 total_cases=case_count,
                 created_at=suite.created_at.isoformat(),
                 telephony_enabled=_suite_telephony_enabled(suite),
+                prompt_id=str(suite.prompt_id) if suite.prompt_id else None,
+                system_prompt=suite.system_prompt,
             )
         )
 
@@ -482,6 +506,8 @@ async def get_test_suite(
         total_cases=case_count,
         created_at=suite.created_at.isoformat(),
         telephony_enabled=_suite_telephony_enabled(suite),
+        prompt_id=str(suite.prompt_id) if suite.prompt_id else None,
+        system_prompt=suite.system_prompt,
     )
 
 

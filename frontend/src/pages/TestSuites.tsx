@@ -12,6 +12,7 @@ import {
   fetchAudioSources,
   listCars,
   getCarNoiseTypes,
+  listPrompts,
   type SweepConfigRequest,
   type SweepPreview,
   type KeyStatusResponse,
@@ -392,8 +393,12 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
   const [carNoiseTypes, setCarNoiseTypes] = useState<string[]>([]);
   const [preview, setPreview] = useState<SweepPreview | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [selectedPromptId, setSelectedPromptId] = useState<string>("");
+  const [customPrompt, setCustomPrompt] = useState<string>("");
+  const [showCustomPrompt, setShowCustomPrompt] = useState(false);
 
   const keyStatus = useQuery({ queryKey: ["keyStatus"], queryFn: fetchKeyStatus });
+  const promptsQuery = useQuery({ queryKey: ["prompts"], queryFn: listPrompts });
   const ollamaStatus = useQuery({ queryKey: ["ollamaModels"], queryFn: fetchOllamaModels, refetchInterval: 30000 });
   const audioSources = useQuery({ queryKey: ["audioSources"], queryFn: fetchAudioSources });
   const carsQuery = useQuery({ queryKey: ["cars"], queryFn: listCars });
@@ -437,6 +442,8 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
       ...(selectedLanguages.length > 0 ? { voice_languages: selectedLanguages } : {}),
       ...(selectedGenders.length > 0 ? { voice_genders: selectedGenders } : {}),
       ...(maxSamples ? { max_samples: maxSamples } : {}),
+      ...(selectedPromptId ? { prompt_id: selectedPromptId } : {}),
+      ...(showCustomPrompt && customPrompt ? { system_prompt: customPrompt } : {}),
     };
   }
 
@@ -484,6 +491,47 @@ function NewSuiteForm({ onCreated }: { onCreated: () => void }) {
             placeholder="Optional description"
           />
         </div>
+      </div>
+
+      {/* System Prompt */}
+      <div className="bg-amber-50/60 rounded-lg p-3 border border-amber-100">
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-xs font-semibold text-gray-600 uppercase tracking-wider">System Prompt</h4>
+          <button
+            type="button"
+            onClick={() => { setShowCustomPrompt(!showCustomPrompt); setSelectedPromptId(""); }}
+            className="text-[10px] text-amber-700 hover:underline"
+          >
+            {showCustomPrompt ? "← Use Library Prompt" : "Or type custom…"}
+          </button>
+        </div>
+        {showCustomPrompt ? (
+          <textarea
+            value={customPrompt}
+            onChange={e => setCustomPrompt(e.target.value)}
+            rows={4}
+            className="w-full border border-amber-200 rounded-lg px-3 py-2 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-amber-400 resize-y"
+            placeholder="You are a helpful in-car voice assistant..."
+          />
+        ) : (
+          <div className="flex gap-2">
+            <select
+              value={selectedPromptId}
+              onChange={e => setSelectedPromptId(e.target.value)}
+              className="flex-1 border border-amber-200 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-amber-400"
+            >
+              <option value="">— Default prompt —</option>
+              {(promptsQuery.data ?? []).map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+            {selectedPromptId && (
+              <div className="flex-1 bg-white border border-amber-100 rounded-lg px-3 py-2 text-xs font-mono text-slate-600 overflow-y-auto max-h-20">
+                {promptsQuery.data?.find(p => p.id === selectedPromptId)?.content}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Row 2: Audio Sources + Pipeline/Backends side by side */}

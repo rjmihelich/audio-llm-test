@@ -20,7 +20,7 @@ if _ps_dir.is_dir() and "pipeline_studio" not in sys.modules:
     sys.modules["pipeline_studio"] = _mod
 
 from .config import settings
-from .api import speech, tests, runs, results, ws, health, cars
+from .api import speech, tests, runs, results, ws, health, cars, prompts as prompts_router
 from .api import settings as settings_router
 
 
@@ -36,6 +36,7 @@ async def lifespan(app: FastAPI):
     import backend.app.models.test  # noqa: F401
     import backend.app.models.run  # noqa: F401
     import backend.app.models.car  # noqa: F401
+    import backend.app.models.prompt  # noqa: F401
     import backend.app.models.pipeline  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -72,6 +73,7 @@ app.include_router(ws.router, prefix="/api/ws", tags=["WebSocket"])
 app.include_router(settings_router.router, prefix="/api/settings", tags=["Settings"])
 app.include_router(health.router, prefix="/api/health", tags=["Health"])
 app.include_router(cars.router, prefix="/api/cars", tags=["Cars"])
+app.include_router(prompts_router.router, prefix="/api", tags=["Prompts"])
 
 # Pipeline Studio routes
 from pipeline_studio.backend.api.pipelines import router as pipelines_router

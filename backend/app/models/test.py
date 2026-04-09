@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.models.base import Base
+from backend.app.models.prompt import Prompt  # noqa: F401 — ensure Prompt is registered
 
 
 # ---------------------------------------------------------------------------
@@ -49,6 +50,12 @@ class TestSuite(Base):
         nullable=False,
         default=TestSuiteStatusEnum.draft,
     )
+
+    # Prompt association
+    prompt_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("prompts.id", ondelete="SET NULL"), nullable=True
+    )
+    system_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relationships
     sweep_configs: Mapped[list["SweepConfig"]] = relationship(back_populates="test_suite", lazy="selectin")
@@ -175,6 +182,11 @@ class TestCase(Base):
     far_end_offset_ms: Mapped[float | None] = mapped_column(
         Float, nullable=True, default=0.0,
         comment="Far-end timing offset (ms). Negative = far-end starts first.",
+    )
+
+    system_prompt: Mapped[str | None] = mapped_column(
+        Text, nullable=True,
+        comment="Resolved system prompt text for this test case",
     )
 
     pipeline: Mapped[str] = mapped_column(

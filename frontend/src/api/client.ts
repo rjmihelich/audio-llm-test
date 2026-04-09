@@ -163,6 +163,7 @@ export interface SweepConfigRequest {
   corpus_categories?: string[];
   corpus_entry_ids?: string[];
   system_prompt?: string;
+  prompt_id?: string | null;
   max_samples?: number | null;
   telephony?: TelephonyConfig;
 }
@@ -793,4 +794,49 @@ export function importSlurp(maxPerScenario = 100): Promise<SlurpImportResponse> 
   return request(`/speech/import-slurp?max_per_scenario=${maxPerScenario}`, {
     method: "POST",
   });
+}
+
+// ---------------------------------------------------------------------------
+// Prompts
+// ---------------------------------------------------------------------------
+
+export interface PromptResponse {
+  id: string;
+  name: string;
+  content: string;
+  description: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PromptCreate {
+  name: string;
+  content: string;
+  description?: string;
+}
+
+export interface PromptUpdate {
+  name?: string;
+  content?: string;
+  description?: string;
+}
+
+export function listPrompts(): Promise<PromptResponse[]> {
+  return request("/prompts");
+}
+
+export function getPrompt(id: string): Promise<PromptResponse> {
+  return request(`/prompts/${id}`);
+}
+
+export function createPrompt(body: PromptCreate): Promise<PromptResponse> {
+  return request("/prompts", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function updatePrompt(id: string, body: PromptUpdate): Promise<PromptResponse> {
+  return request(`/prompts/${id}`, { method: "PATCH", body: JSON.stringify(body) });
+}
+
+export function deletePrompt(id: string): Promise<void> {
+  return request(`/prompts/${id}`, { method: "DELETE" });
 }
