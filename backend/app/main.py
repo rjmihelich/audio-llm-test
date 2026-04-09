@@ -83,3 +83,9 @@ app.include_router(pipelines_router, tags=["Pipelines"])
 @app.get("/api/ping")
 async def ping():
     return {"status": "ok"}
+
+
+@app.get("/health")
+async def health_version():
+    import os
+    return {"status": "ok", "app": "audio-llm-test", "version": os.getenv("APP_VERSION", "dev")}

@@ -18,6 +18,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")"
+export APP_VERSION="$(date +%Y%m%d)-$(git rev-parse --short HEAD)"
 
 BOLD='\033[1m'
 GREEN='\033[0;32m'
