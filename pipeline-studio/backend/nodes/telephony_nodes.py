@@ -147,3 +147,153 @@ async def execute_doubletalk_metrics(
     )
 
     return {"eval_out": metrics.to_dict() if hasattr(metrics, "to_dict") else vars(metrics)}
+
+
+async def execute_far_end_source(
+    node: GraphNode, inputs: dict[str, Any], config: dict, ctx: ExecutionContext
+) -> dict[str, Any]:
+    """Load far-end caller audio with optional level and offset adjustments."""
+    import numpy as np
+
+    audio: AudioBuffer | None = None
+
+    source_mode = config.get("source_mode", "pipeline_input")
+
+    if source_mode == "pipeline_input":
+        # Pull from pipeline context (far_end_speech from test case)
+        audio = ctx.pipeline_input.get("far_end_speech") if hasattr(ctx, "pipeline_input") and ctx.pipeline_input else None
+        if audio is None:
+            raise ValueError("far_end_source: no far-end speech in pipeline input")
+    elif source_mode == "file":
+        import soundfile as sf
+        file_path = config.get("file_path", "")
+        if not file_path:
+            raise ValueError("far_end_source: file_path is required")
+        data, sr = sf.read(file_path, dtype="float32")
+        if data.ndim > 1:
+            data = data[:, 0]
+        audio = AudioBuffer(samples=data, sample_rate=sr)
+    elif source_mode == "corpus_entry":
+        corpus_id = config.get("corpus_entry_id", "")
+        if not corpus_id:
+            raise ValueError("far_end_source: corpus_entry_id is required")
+        from backend.app.config import settings
+        import soundfile as sf
+        # Look up speech sample file
+        from backend.app.models.base import async_session
+        from backend.app.models.speech import SpeechSample
+        from sqlalchemy import select as sa_select
+        import uuid
+        async with async_session() as session:
+            stmt = sa_select(SpeechSample).where(SpeechSample.id == uuid.UUID(corpus_id))
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if not row:
+                raise ValueError(f"far_end_source: corpus entry {corpus_id} not found")
+            fpath = settings.audio_storage_path / row.file_path
+        data, sr = sf.read(str(fpath), dtype="float32")
+        if data.ndim > 1:
+            data = data[:, 0]
+        audio = AudioBuffer(samples=data, sample_rate=sr)
+
+    # Apply level adjustment
+    level_db = config.get("level_db", 0.0)
+    if level_db != 0.0 and audio is not None:
+        gain = 10 ** (level_db / 20.0)
+        audio = AudioBuffer(samples=audio.samples * gain, sample_rate=audio.sample_rate)
+
+    # Apply timing offset by zero-padding
+    offset_ms = config.get("offset_ms", 0.0)
+    if offset_ms != 0.0 and audio is not None:
+        offset_samples = int(abs(offset_ms) / 1000.0 * audio.sample_rate)
+        if offset_ms < 0:
+            # Negative offset: far-end starts first → prepend silence (delay near-end relative)
+            # In practice, we pad the *front* so far-end is early
+            pass  # No padding needed - the offset is metadata for downstream mixing
+        # Store offset as metadata for downstream nodes that do the actual mixing
+        # For standalone use, pad with zeros
+        if offset_ms > 0:
+            # Far-end starts late → prepend silence to far-end
+            pad = np.zeros(offset_samples, dtype=np.float32)
+            audio = AudioBuffer(
+                samples=np.concatenate([pad, audio.samples]),
+                sample_rate=audio.sample_rate,
+            )
+        elif offset_ms < 0:
+            # Far-end starts early → append silence (far-end plays first, then near-end catches up)
+            pad = np.zeros(offset_samples, dtype=np.float32)
+            audio = AudioBuffer(
+                samples=np.concatenate([audio.samples, pad]),
+                sample_rate=audio.sample_rate,
+            )
+
+    return {"audio_out": audio}
+
+
+async def execute_telephony_judge(
+    node: GraphNode, inputs: dict[str, Any], config: dict, ctx: ExecutionContext
+) -> dict[str, Any]:
+    """LLM-based telephony quality evaluation with multi-judge majority voting."""
+    from backend.app.evaluation.telephony_judge import (
+        TelephonyJudgeEvaluator,
+        TelephonyJudgeMode,
+    )
+    from backend.app.execution.worker import _init_backend
+    from backend.app.pipeline.base import PipelineInput, PipelineResult
+
+    # Resolve judge LLM backend
+    judge_backend_str = config.get("judge_backend", "openai:gpt-4o-audio-preview")
+    judge_backend = _init_backend(judge_backend_str)
+
+    # Resolve modes
+    modes_str = config.get("modes", "auto")
+    modes: list[TelephonyJudgeMode] | None = None
+    if modes_str == "all":
+        modes = list(TelephonyJudgeMode)
+    elif modes_str != "auto":
+        modes = [TelephonyJudgeMode(modes_str)]
+    # None = auto-detect
+
+    evaluator = TelephonyJudgeEvaluator(
+        judge_backend=judge_backend,
+        modes=modes,
+        num_judges=config.get("num_judges", 3),
+        pass_threshold=config.get("pass_threshold", 0.6),
+    )
+
+    # Build PipelineInput / PipelineResult from available inputs
+    text_response = inputs.get("text_in", "")
+    audio_in = inputs.get("audio_in")
+    near_end_ref = inputs.get("near_end_ref")
+    far_end_ref = inputs.get("far_end_ref")
+
+    # Construct PipelineInput with available audio references
+    # PipelineInput requires clean_speech, original_text, expected_intent
+    clean_speech = near_end_ref or audio_in
+    if clean_speech is None:
+        # Create a silent placeholder if no audio provided
+        import numpy as np
+        clean_speech = AudioBuffer(samples=np.zeros(16000, dtype=np.float32), sample_rate=16000)
+
+    pipeline_input = PipelineInput(
+        clean_speech=clean_speech,
+        original_text="",
+        expected_intent="",
+        far_end_speech=far_end_ref,
+    )
+
+    pipeline_result = PipelineResult(
+        degraded_audio=audio_in,
+        llm_response=None,
+    )
+    # Attach transcription text if available
+    if text_response:
+        from backend.app.llm.base import Transcription
+        pipeline_result.transcription = Transcription(
+            text=text_response if isinstance(text_response, str) else str(text_response),
+        )
+
+    result = await evaluator.evaluate(pipeline_input, pipeline_result)
+
+    # Serialize result
+    eval_data = result.to_dict() if hasattr(result, "to_dict") else vars(result)
+    return {"eval_out": eval_data}

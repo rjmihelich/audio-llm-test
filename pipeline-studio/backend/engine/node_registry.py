@@ -646,9 +646,77 @@ def _build_registry() -> dict[str, NodeTypeDef]:
         color="#E879F9",
     ))
 
+    nodes.append(NodeTypeDef(
+        type_id="far_end_source",
+        label="Far-End Speech Source",
+        category="sources",
+        description="Far-end caller audio with timing offset for 2-way telephony",
+        inputs=[],
+        outputs=[PortDef("audio_out", PortType.audio, description="Far-end speech signal")],
+        config_fields=[
+            ConfigField("source_mode", "select", "Source", "pipeline_input",
+                        options=[
+                            {"value": "pipeline_input", "label": "From Test Case"},
+                            {"value": "corpus_entry", "label": "Corpus Entry"},
+                            {"value": "file", "label": "Audio File"},
+                        ]),
+            ConfigField("corpus_entry_id", "string", "Corpus Entry ID", ""),
+            ConfigField("file_path", "string", "File Path", ""),
+            ConfigField("level_db", "slider", "Level (dB)", 0.0,
+                        min_val=-30, max_val=12, step=0.5,
+                        description="Gain applied to far-end speech. 0=original level."),
+            ConfigField("offset_ms", "slider", "Offset (ms)", 0.0,
+                        min_val=-5000, max_val=5000, step=50,
+                        description="Timing offset. Negative=far-end starts first (barge-in)."),
+        ],
+        color="#A3E635",
+    ))
+
     # -----------------------------------------------------------------------
     # EVALUATION BLOCKS
     # -----------------------------------------------------------------------
+    nodes.append(NodeTypeDef(
+        type_id="telephony_judge",
+        label="Telephony Judge",
+        category="evaluation",
+        description="LLM-based telephony quality evaluation with multi-judge voting",
+        inputs=[
+            PortDef("text_in", PortType.text, required=False, description="LLM response text"),
+            PortDef("audio_in", PortType.audio, required=False, description="Processed audio"),
+            PortDef("near_end_ref", PortType.audio, required=False, description="Clean near-end reference"),
+            PortDef("far_end_ref", PortType.audio, required=False, description="Clean far-end reference"),
+        ],
+        outputs=[PortDef("eval_out", PortType.evaluation)],
+        config_fields=[
+            ConfigField("modes", "select", "Evaluation Mode", "auto",
+                        options=[
+                            {"value": "auto", "label": "Auto-detect"},
+                            {"value": "uplink_quality", "label": "Uplink Quality"},
+                            {"value": "downlink_quality", "label": "Downlink Quality"},
+                            {"value": "speaker_attribution", "label": "Speaker Attribution"},
+                            {"value": "barge_in", "label": "Barge-in Detection"},
+                            {"value": "conversational", "label": "Conversational Quality"},
+                            {"value": "all", "label": "All Modes"},
+                        ]),
+            ConfigField("judge_backend", "select", "Judge LLM", "openai:gpt-4o-audio-preview",
+                        options=[
+                            {"value": "openai:gpt-4o-audio-preview", "label": "GPT-4o Audio"},
+                            {"value": "openai:gpt-4o-mini-audio-preview", "label": "GPT-4o Mini Audio"},
+                            {"value": "gemini:gemini-2.0-flash", "label": "Gemini 2.0 Flash"},
+                            {"value": "anthropic:claude-sonnet-4-6", "label": "Claude Sonnet"},
+                        ]),
+            ConfigField("num_judges", "slider", "Number of Judges", 3,
+                        min_val=1, max_val=7, step=2,
+                        description="Odd number for majority voting"),
+            ConfigField("pass_threshold", "slider", "Pass Threshold", 0.6,
+                        min_val=0, max_val=1, step=0.05),
+            ConfigField("system_prompt_override", "string", "System Prompt Override", "",
+                        multiline=True,
+                        description="Override default telephony judge prompt (leave empty for default)"),
+        ],
+        color="#FB923C",
+    ))
+
     nodes.append(NodeTypeDef(
         type_id="eval_analysis",
         label="Evaluation & Analysis",

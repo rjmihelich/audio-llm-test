@@ -26,6 +26,8 @@ _EXECUTOR_MAP: dict[str, str] = {
     "aec_residual": "telephony_nodes",
     "agc": "telephony_nodes",
     "doubletalk_metrics": "telephony_nodes",
+    "far_end_source": "telephony_nodes",
+    "telephony_judge": "telephony_nodes",
     # dsp
     "noise_reduction": "dsp_nodes",
     "sample_rate_converter": "dsp_nodes",

@@ -24,6 +24,8 @@ const nodeTypes: Record<string, typeof BaseNode> = {
   sample_rate_converter: BaseNode,
   time_delay: BaseNode,
   doubletalk_metrics: BaseNode,
+  far_end_source: BaseNode,
+  telephony_judge: BaseNode,
   tts: BaseNode,
   stt: BaseNode,
   llm: BaseNode,
