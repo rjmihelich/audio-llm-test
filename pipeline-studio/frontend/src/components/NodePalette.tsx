@@ -33,7 +33,7 @@ export default function NodePalette({ registry, isLoading }: NodePaletteProps) {
     grouped[nodeDef.category].push(nodeDef)
   }
 
-  const categoryOrder = ['sources', 'processing', 'network', 'speech', 'llm', 'evaluation', 'output']
+  const categoryOrder = ['sources', 'processing', 'telephony', 'network', 'speech', 'llm', 'evaluation', 'output']
   const hasResults = Object.values(grouped).some(g => g.length > 0)
 
   return (
