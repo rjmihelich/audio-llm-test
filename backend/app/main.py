@@ -37,7 +37,7 @@ async def lifespan(app: FastAPI):
     import backend.app.models.run  # noqa: F401
     import backend.app.models.car  # noqa: F401
     import backend.app.models.prompt  # noqa: F401
-    import backend.app.models.pipeline  # noqa: F401
+    import pipeline_studio.backend.models.pipeline  # noqa: F401
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
