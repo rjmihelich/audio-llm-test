@@ -2,12 +2,22 @@
 
 from __future__ import annotations
 
+import sys
+import types
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pathlib import Path
+
+# Register pipeline-studio (hyphenated dir) as pipeline_studio Python package
+_ps_dir = Path(__file__).resolve().parent.parent.parent / "pipeline-studio"
+if _ps_dir.is_dir() and "pipeline_studio" not in sys.modules:
+    _mod = types.ModuleType("pipeline_studio")
+    _mod.__path__ = [str(_ps_dir)]
+    _mod.__package__ = "pipeline_studio"
+    sys.modules["pipeline_studio"] = _mod
 
 from .config import settings
 from .api import speech, tests, runs, results, ws, health, cars
