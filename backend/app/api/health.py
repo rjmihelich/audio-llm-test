@@ -8,7 +8,7 @@ import platform
 import time
 from datetime import datetime, timezone
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 router = APIRouter()
@@ -311,6 +311,40 @@ async def _get_worker_activity() -> WorkerActivity:
         )
     except Exception:
         return WorkerActivity(status="unknown")
+
+
+@router.get("/ready")
+async def readiness_check():
+    """Readiness probe — returns 200 only when DB and Redis are reachable.
+
+    Used by Docker health checks and the deploy script to determine when the
+    app is actually serving traffic (not just started).
+    """
+    errors = []
+
+    # Check database connectivity
+    try:
+        from sqlalchemy import text
+        from backend.app.models.base import engine
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+    except Exception as e:
+        errors.append(f"db: {e}")
+
+    # Check Redis connectivity
+    try:
+        from arq.connections import create_pool, RedisSettings
+        from ..config import settings
+        redis = await create_pool(RedisSettings.from_dsn(settings.redis_url))
+        await redis.ping()
+        await redis.aclose()
+    except Exception as e:
+        errors.append(f"redis: {e}")
+
+    if errors:
+        raise HTTPException(status_code=503, detail={"status": "not_ready", "errors": errors})
+
+    return {"status": "ready"}
 
 
 @router.get("/system", response_model=HealthResponse)
