@@ -23,6 +23,7 @@ export interface ConfigFieldDef {
   max?: number
   step?: number
   description: string
+  multiline?: boolean
 }
 
 export interface NodeTypeDef {

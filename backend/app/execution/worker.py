@@ -457,6 +457,7 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                     eq_config=tc.eq_config_json,
                     pipeline=tc.pipeline,
                     llm_backend=tc.llm_backend,
+                    **({ "system_prompt": tc.system_prompt } if getattr(tc, "system_prompt", None) else {}),
                     bt_codec=getattr(tc, "bt_codec", None),
                     agc_preset=agc_preset,
                     aec_residual_config=getattr(tc, "aec_residual_config_json", None),

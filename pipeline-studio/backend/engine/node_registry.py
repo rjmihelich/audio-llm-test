@@ -41,6 +41,7 @@ class ConfigField:
     max_val: float | None = None
     step: float | None = None
     description: str = ""
+    multiline: bool = False  # render "string" fields as textarea
 
 
 @dataclass
@@ -377,7 +378,7 @@ def _build_registry() -> dict[str, NodeTypeDef]:
                             {"value": "ollama:mistral", "label": "Ollama Mistral"},
                         ]),
             ConfigField("system_prompt", "string", "System Prompt",
-                        "You are a helpful in-car voice assistant."),
+                        "You are a helpful in-car voice assistant.", multiline=True),
             ConfigField("temperature", "slider", "Temperature", 0.7,
                         min_val=0, max_val=2, step=0.1),
         ],
@@ -426,7 +427,7 @@ def _build_registry() -> dict[str, NodeTypeDef]:
             ConfigField("temperature", "slider", "Temperature", 0.8,
                         min_val=0, max_val=2, step=0.1),
             ConfigField("system_prompt", "string", "Instructions",
-                        "You are a helpful in-car voice assistant."),
+                        "You are a helpful in-car voice assistant.", multiline=True),
             ConfigField("chunk_ms", "slider", "Stream Chunk (ms)", 20,
                         min_val=5, max_val=100, step=5,
                         description="Audio chunk size for streaming"),
@@ -772,7 +773,7 @@ def registry_to_dict() -> dict:
                     "name": f.name, "type": f.field_type, "label": f.label or f.name,
                     "default": f.default, "options": f.options,
                     "min": f.min_val, "max": f.max_val, "step": f.step,
-                    "description": f.description,
+                    "description": f.description, "multiline": f.multiline,
                 }
                 for f in node_def.config_fields
             ],

@@ -96,6 +96,20 @@ function FieldRenderer({
 
   switch (field.type) {
     case 'string':
+      if (field.multiline) {
+        return (
+          <div>
+            <label className="text-[10px] font-medium text-gray-500 block mb-0.5">{label}</label>
+            <textarea
+              value={String(value || '')}
+              onChange={(e) => onChange(e.target.value)}
+              className="w-full border border-gray-200 rounded px-2 py-1 text-xs resize-y min-h-[80px]"
+              placeholder={field.description || ''}
+              rows={4}
+            />
+          </div>
+        )
+      }
       return (
         <div>
           <label className="text-[10px] font-medium text-gray-500 block mb-0.5">{label}</label>
