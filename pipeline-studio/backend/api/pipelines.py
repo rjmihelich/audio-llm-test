@@ -385,7 +385,27 @@ async def execute_preview(
     pipeline_id: str,
     session: AsyncSession = Depends(get_session),
 ):
-    """Execute the pipeline once with a sample input for preview."""
+    """Execute the pipeline end-to-end using real corpus speech.
+
+    Finds speech_source nodes in the graph, synthesizes real speech via TTS
+    based on their config, then runs the full pipeline. Returns audio + text
+    results with the audio auto-playable in the browser.
+    """
+    import base64
+    import io
+    import logging
+
+    import numpy as np
+    import soundfile as sf
+    from sqlalchemy.sql.expression import func
+
+    from backend.app.audio.types import AudioBuffer
+    from backend.app.models.speech import CorpusEntry
+    from backend.app.pipeline.base import PipelineInput
+    from ..engine.graph_executor import GraphPipeline
+
+    log = logging.getLogger(__name__)
+
     result = await session.execute(
         select(Pipeline).where(Pipeline.id == uuid.UUID(pipeline_id))
     )
@@ -393,36 +413,94 @@ async def execute_preview(
     if not pipeline:
         raise HTTPException(404, "Pipeline not found")
 
-    # Build a sample PipelineInput
-    import numpy as np
-    from backend.app.audio.types import AudioBuffer
-    from backend.app.pipeline.base import PipelineInput
-    from ..engine.graph_executor import GraphPipeline
+    graph_json = pipeline.graph_json
+    graph_nodes = graph_json.get("nodes", [])
 
-    # Generate a short sine wave as sample speech
-    sample_rate = 16000
-    duration = 2.0
-    t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
-    samples = (0.5 * np.sin(2 * np.pi * 440 * t)).astype(np.float64)
-    sample_audio = AudioBuffer(samples=samples, sample_rate=sample_rate)
+    # Find speech_source / far_end_source nodes to generate real audio
+    speech_audio: AudioBuffer | None = None
+    speech_text = "The quick brown fox jumps over the lazy dog"
 
-    sample_input = PipelineInput(
-        clean_speech=sample_audio,
-        original_text="Navigate to the nearest gas station",
-        expected_intent="navigation",
-        expected_action="navigate_nearest_gas_station",
+    for gn in graph_nodes:
+        type_id = gn.get("type", gn.get("data", {}).get("type_id", ""))
+        if type_id not in ("speech_source", "far_end_source"):
+            continue
+        config = gn.get("data", {}).get("config", {})
+        mode = config.get("source_mode", "corpus_entry")
+
+        if mode == "file":
+            path = config.get("file_path", "")
+            if path:
+                from backend.app.audio.io import load_audio
+                speech_audio = load_audio(path, target_sample_rate=16000)
+                speech_text = f"(file: {path})"
+            break
+
+        # corpus_entry mode — pick from DB and synthesize
+        category = config.get("corpus_category", "")
+        entry_id = config.get("corpus_entry_id", "")
+        provider_name = config.get("tts_provider", "edge")
+        voice_id = config.get("voice_id", "")
+
+        # Get corpus text
+        entry: CorpusEntry | None = None
+        if entry_id:
+            r = await session.execute(
+                select(CorpusEntry).where(CorpusEntry.id == uuid.UUID(entry_id))
+            )
+            entry = r.scalar_one_or_none()
+        if not entry and category:
+            r = await session.execute(
+                select(CorpusEntry)
+                .where(CorpusEntry.category == category, CorpusEntry.language == "en")
+                .order_by(func.random()).limit(1)
+            )
+            entry = r.scalar_one_or_none()
+        if not entry:
+            r = await session.execute(
+                select(CorpusEntry)
+                .where(CorpusEntry.language == "en")
+                .order_by(func.random()).limit(1)
+            )
+            entry = r.scalar_one_or_none()
+
+        if entry:
+            speech_text = entry.text
+            try:
+                from backend.app.api.speech import _load_tts_provider
+                tts = _load_tts_provider(provider_name)
+                if tts:
+                    if not voice_id:
+                        voices = await tts.list_voices()
+                        voice_id = voices[0].voice_id if voices else "en-US-AriaNeural"
+                    speech_audio = await tts.synthesize(entry.text, voice_id)
+                    log.info("Execute TTS: '%s' via %s/%s → %.1fs",
+                             entry.text[:60], provider_name, voice_id, speech_audio.duration_s)
+            except Exception as e:
+                log.warning("Execute TTS failed: %s", e)
+        break
+
+    # Fallback to silence if TTS failed
+    if speech_audio is None:
+        sample_rate = 16000
+        speech_audio = AudioBuffer(
+            samples=np.zeros(int(sample_rate * 2.0), dtype=np.float64),
+            sample_rate=sample_rate,
+        )
+
+    pipeline_input = PipelineInput(
+        clean_speech=speech_audio,
+        original_text=speech_text,
+        expected_intent="preview",
+        expected_action="preview",
     )
 
     try:
-        graph_pipeline = GraphPipeline(pipeline.graph_json)
-        pipeline_result = await graph_pipeline.execute(sample_input)
+        graph_pipeline = GraphPipeline(graph_json)
+        pipeline_result = await graph_pipeline.execute(pipeline_input)
 
         # Serialize audio as base64 WAV if present
         audio_wav_base64 = None
         if pipeline_result.degraded_audio is not None:
-            import base64
-            import io
-            import soundfile as sf
             buf = io.BytesIO()
             sf.write(
                 buf,
@@ -443,6 +521,7 @@ async def execute_preview(
             "llm_response_text": pipeline_result.llm_response.text if pipeline_result.llm_response else None,
             "transcription_text": pipeline_result.transcription.text if pipeline_result.transcription else None,
             "audio_wav_base64": audio_wav_base64,
+            "source_text": speech_text,
             "error": pipeline_result.error,
         }
     except Exception as e:

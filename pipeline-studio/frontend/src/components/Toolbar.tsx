@@ -203,12 +203,44 @@ export default function Toolbar({ registry }: ToolbarProps) {
 
   const handleExecute = async () => {
     if (!pipelineId) {
-      setPreviewResult({ error: 'Save the pipeline first' })
+      // Auto-save first, then execute
+      const graphJson = buildGraphJson()
+      try {
+        const saved = await createMutation.mutateAsync({ name, graph_json: graphJson })
+        setPipeline(saved.id, saved.name, nodes, edges)
+        setDirty(false)
+        // Now execute with the new ID
+        const result = await previewMutation.mutateAsync(saved.id)
+        setPreviewResult(result)
+        // Auto-play audio if present
+        if (result.audio_wav_base64) {
+          const audio = new Audio(`data:audio/wav;base64,${result.audio_wav_base64}`)
+          audio.play().catch(() => {})
+        }
+      } catch (e) {
+        setPreviewResult({ error: `${e instanceof Error ? e.message : 'unknown'}` })
+      }
       return
+    }
+    // Save if dirty, then execute
+    if (isDirty) {
+      try {
+        const graphJson = buildGraphJson()
+        await updateMutation.mutateAsync({ id: pipelineId, name, graph_json: graphJson })
+        setDirty(false)
+      } catch (e) {
+        setPreviewResult({ error: `Save failed: ${e instanceof Error ? e.message : 'unknown'}` })
+        return
+      }
     }
     try {
       const result = await previewMutation.mutateAsync(pipelineId)
       setPreviewResult(result)
+      // Auto-play audio if present
+      if (result.audio_wav_base64) {
+        const audio = new Audio(`data:audio/wav;base64,${result.audio_wav_base64}`)
+        audio.play().catch(() => {})
+      }
     } catch (e) {
       setPreviewResult({ error: `Execution error: ${e instanceof Error ? e.message : 'unknown'}` })
     }
@@ -383,11 +415,11 @@ export default function Toolbar({ registry }: ToolbarProps) {
         {/* Execute pipeline */}
         <button
           onClick={handleExecute}
-          disabled={previewMutation.isPending || !pipelineId}
+          disabled={previewMutation.isPending || createMutation.isPending || nodes.length === 0}
           className="px-3 py-1 bg-emerald-600 text-white text-xs font-medium rounded hover:bg-emerald-500 disabled:opacity-50"
           title="Execute the entire pipeline end-to-end (save first)"
         >
-          {previewMutation.isPending ? 'Running...' : 'Execute'}
+          {previewMutation.isPending || createMutation.isPending ? 'Running...' : 'Execute'}
         </button>
 
         <div className="w-px h-6 bg-gray-200" />
@@ -511,19 +543,33 @@ export default function Toolbar({ registry }: ToolbarProps) {
                   <span className="text-green-600 font-medium">Success</span>
                   <span className="text-gray-400">|</span>
                   <span className="text-gray-500">{previewResult.total_latency_ms?.toFixed(0)} ms</span>
-                  <span className="text-gray-400">|</span>
-                  <span className="text-gray-500">{previewResult.pipeline_type}</span>
                 </div>
+
+                {/* Source text */}
+                {previewResult.source_text && (
+                  <div>
+                    <div className="text-xs font-medium text-gray-600 mb-1">Source Text</div>
+                    <div className="bg-green-50 rounded p-3 text-sm text-gray-800 italic">&ldquo;{previewResult.source_text}&rdquo;</div>
+                  </div>
+                )}
 
                 {/* Audio player */}
                 {previewResult.audio_wav_base64 && (
                   <div>
-                    <div className="text-xs font-medium text-gray-600 mb-1">Audio Output</div>
+                    <div className="text-xs font-medium text-gray-600 mb-1">Audio Output (auto-playing)</div>
                     <audio
                       controls
+                      autoPlay
                       className="w-full h-10"
                       src={`data:audio/wav;base64,${previewResult.audio_wav_base64}`}
                     />
+                  </div>
+                )}
+
+                {/* No audio warning */}
+                {!previewResult.audio_wav_base64 && !previewResult.transcription_text && !previewResult.llm_response_text && (
+                  <div className="bg-yellow-50 text-yellow-700 text-xs rounded p-3">
+                    Pipeline ran but produced no output. Make sure your nodes are connected — wire audio_out → audio_in between nodes.
                   </div>
                 )}
 
