@@ -130,3 +130,11 @@ export async function validateGraphInline(graph: Record<string, unknown>): Promi
 export async function executePreview(id: string): Promise<Record<string, unknown>> {
   return json(await fetch(`${BASE}/${id}/execute-preview`, { method: 'POST' }))
 }
+
+export async function executeInline(graphJson: Record<string, unknown>): Promise<Record<string, unknown>> {
+  return json(await fetch(`${BASE}/execute-inline`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ graph_json: graphJson }),
+  }))
+}

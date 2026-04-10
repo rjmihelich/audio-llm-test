@@ -380,17 +380,11 @@ async def preview_node(
     )
 
 
-@router.post("/{pipeline_id}/execute-preview")
-async def execute_preview(
-    pipeline_id: str,
-    session: AsyncSession = Depends(get_session),
-):
-    """Execute the pipeline end-to-end using real corpus speech.
-
-    Finds speech_source nodes in the graph, synthesizes real speech via TTS
-    based on their config, then runs the full pipeline. Returns audio + text
-    results with the audio auto-playable in the browser.
-    """
+async def _execute_graph(
+    graph_json: dict[str, Any],
+    session: AsyncSession,
+) -> dict[str, Any]:
+    """Shared logic: generate TTS from source nodes, execute graph, return result."""
     import base64
     import io
     import logging
@@ -406,14 +400,6 @@ async def execute_preview(
 
     log = logging.getLogger(__name__)
 
-    result = await session.execute(
-        select(Pipeline).where(Pipeline.id == uuid.UUID(pipeline_id))
-    )
-    pipeline = result.scalar_one_or_none()
-    if not pipeline:
-        raise HTTPException(404, "Pipeline not found")
-
-    graph_json = pipeline.graph_json
     graph_nodes = graph_json.get("nodes", [])
 
     # Find speech_source / far_end_source nodes to generate real audio
@@ -441,7 +427,6 @@ async def execute_preview(
         provider_name = config.get("tts_provider", "edge")
         voice_id = config.get("voice_id", "")
 
-        # Get corpus text
         entry: CorpusEntry | None = None
         if entry_id:
             r = await session.execute(
@@ -479,7 +464,6 @@ async def execute_preview(
                 log.warning("Execute TTS failed: %s", e)
         break
 
-    # Fallback to silence if TTS failed
     if speech_audio is None:
         sample_rate = 16000
         speech_audio = AudioBuffer(
@@ -498,7 +482,6 @@ async def execute_preview(
         graph_pipeline = GraphPipeline(graph_json)
         pipeline_result = await graph_pipeline.execute(pipeline_input)
 
-        # Serialize audio as base64 WAV if present
         audio_wav_base64 = None
         if pipeline_result.degraded_audio is not None:
             buf = io.BytesIO()
@@ -529,3 +512,33 @@ async def execute_preview(
             "success": False,
             "error": f"{type(e).__name__}: {e}",
         }
+
+
+@router.post("/{pipeline_id}/execute-preview")
+async def execute_preview(
+    pipeline_id: str,
+    session: AsyncSession = Depends(get_session),
+):
+    """Execute a saved pipeline end-to-end."""
+    result = await session.execute(
+        select(Pipeline).where(Pipeline.id == uuid.UUID(pipeline_id))
+    )
+    pipeline = result.scalar_one_or_none()
+    if not pipeline:
+        raise HTTPException(404, "Pipeline not found")
+    return await _execute_graph(pipeline.graph_json, session)
+
+
+@router.post("/execute-inline")
+async def execute_inline(
+    body: dict[str, Any],
+    session: AsyncSession = Depends(get_session),
+):
+    """Execute a graph directly from JSON without saving.
+
+    Used by the continuous playback loop — sends the current graph state
+    each iteration so parameter changes (mixer gains, etc.) take effect
+    immediately without needing to save first.
+    """
+    graph_json = body.get("graph_json", body)
+    return await _execute_graph(graph_json, session)

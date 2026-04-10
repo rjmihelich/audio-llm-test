@@ -1,4 +1,4 @@
-/** Top toolbar — File menu, actions, templates, stats */
+/** Top toolbar — File menu, transport controls (Play/Pause/Stop), templates, stats */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useReactFlow } from '@xyflow/react'
@@ -9,12 +9,14 @@ import {
   useDeletePipeline,
   usePipelines,
   useValidateGraph,
-  useExecutePreview,
 } from '../hooks/usePipelineApi'
+import { executeInline } from '../api/client'
 import type { PipelineData, NodeTypeRegistry } from '../api/client'
 import { STATIC_TEMPLATES, type Template } from '../utils/templates'
 import { validateGraph as validateGraphLocal } from '../utils/validation'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
+
+type TransportState = 'stopped' | 'playing' | 'paused' | 'loading'
 
 interface ToolbarProps {
   registry: NodeTypeRegistry | undefined
@@ -31,10 +33,17 @@ export default function Toolbar({ registry }: ToolbarProps) {
   const [showOpenDialog, setShowOpenDialog] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
   const [validationMsg, setValidationMsg] = useState<string | null>(null)
-  const [previewResult, setPreviewResult] = useState<any | null>(null)
   const fileMenuRef = useRef<HTMLDivElement>(null)
   const templateRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Transport state
+  const [transport, setTransport] = useState<TransportState>('stopped')
+  const [nowPlaying, setNowPlaying] = useState<string | null>(null)
+  const [iterationCount, setIterationCount] = useState(0)
+  const [lastError, setLastError] = useState<string | null>(null)
+  const stopRequestedRef = useRef(false)
+  const currentAudioRef = useRef<HTMLAudioElement | null>(null)
 
   const reactFlow = useReactFlow()
 
@@ -42,7 +51,6 @@ export default function Toolbar({ registry }: ToolbarProps) {
   const updateMutation = useUpdatePipeline()
   const deleteMutation = useDeletePipeline()
   const validateMutation = useValidateGraph()
-  const previewMutation = useExecutePreview()
   const { data: savedPipelines, refetch: refetchPipelines } = usePipelines(false)
   const { data: backendTemplates } = usePipelines(true)
   const templates = backendTemplates && backendTemplates.length > 0 ? backendTemplates : STATIC_TEMPLATES
@@ -72,27 +80,30 @@ export default function Toolbar({ registry }: ToolbarProps) {
     return () => clearTimeout(t)
   }, [validationMsg])
 
-  // Serialize graph for API
-  const buildGraphJson = useCallback(() => ({
-    nodes: nodes.map((n) => {
-      const { nodeDef, ...rest } = n.data as Record<string, unknown>
-      return {
-        id: n.id,
-        type: (n.data as Record<string, unknown>).type_id || n.type,
-        position: n.position,
-        data: rest,
-      }
-    }),
-    edges: edges.map((e) => ({
-      id: e.id,
-      source: e.source,
-      sourceHandle: e.sourceHandle,
-      target: e.target,
-      targetHandle: e.targetHandle,
-      data: e.data || { edge_type: 'normal' },
-    })),
-    viewport: { x: 0, y: 0, zoom: 1 },
-  }), [nodes, edges])
+  // Serialize graph for API — reads fresh from store each call
+  const buildGraphJson = useCallback(() => {
+    const { nodes: currentNodes, edges: currentEdges } = useGraphStore.getState()
+    return {
+      nodes: currentNodes.map((n) => {
+        const { nodeDef, ...rest } = n.data as Record<string, unknown>
+        return {
+          id: n.id,
+          type: (n.data as Record<string, unknown>).type_id || n.type,
+          position: n.position,
+          data: rest,
+        }
+      }),
+      edges: currentEdges.map((e) => ({
+        id: e.id,
+        source: e.source,
+        sourceHandle: e.sourceHandle,
+        target: e.target,
+        targetHandle: e.targetHandle,
+        data: e.data || { edge_type: 'normal' },
+      })),
+      viewport: { x: 0, y: 0, zoom: 1 },
+    }
+  }, [])
 
   const handleSave = useCallback(async () => {
     const graphJson = buildGraphJson()
@@ -125,10 +136,107 @@ export default function Toolbar({ registry }: ToolbarProps) {
     }
   }, [name, nodes, edges, buildGraphJson, createMutation, setPipeline, setDirty])
 
-  // Register keyboard shortcuts
   useKeyboardShortcuts(handleSave)
 
+  // ---- Transport controls ----
+
+  const playOneIteration = useCallback(async (): Promise<boolean> => {
+    // Build graph from CURRENT store state (picks up real-time config changes)
+    const graphJson = buildGraphJson()
+    setTransport('loading')
+
+    try {
+      const result = await executeInline(graphJson) as Record<string, any>
+
+      if (stopRequestedRef.current) return false
+
+      if (!result.success) {
+        setLastError(result.error || 'Execution failed')
+        return false
+      }
+
+      setLastError(null)
+      setNowPlaying(result.source_text || null)
+      setIterationCount((c) => c + 1)
+
+      if (result.audio_wav_base64) {
+        setTransport('playing')
+        return new Promise<boolean>((resolve) => {
+          const audio = new Audio(`data:audio/wav;base64,${result.audio_wav_base64}`)
+          currentAudioRef.current = audio
+          audio.onended = () => {
+            currentAudioRef.current = null
+            resolve(!stopRequestedRef.current)
+          }
+          audio.onerror = () => {
+            currentAudioRef.current = null
+            resolve(!stopRequestedRef.current)
+          }
+          audio.play().catch(() => {
+            currentAudioRef.current = null
+            resolve(!stopRequestedRef.current)
+          })
+        })
+      }
+
+      // No audio output — still continue loop
+      setTransport('playing')
+      return !stopRequestedRef.current
+    } catch (e) {
+      setLastError(e instanceof Error ? e.message : 'Unknown error')
+      return false
+    }
+  }, [buildGraphJson])
+
+  const handlePlay = useCallback(async () => {
+    stopRequestedRef.current = false
+    setLastError(null)
+    setIterationCount(0)
+    setTransport('loading')
+
+    // Continuous playback loop
+    let shouldContinue = true
+    while (shouldContinue && !stopRequestedRef.current) {
+      shouldContinue = await playOneIteration()
+    }
+
+    // Loop ended
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause()
+      currentAudioRef.current = null
+    }
+    setTransport('stopped')
+    setNowPlaying(null)
+  }, [playOneIteration])
+
+  const handlePause = useCallback(() => {
+    if (currentAudioRef.current) {
+      if (transport === 'paused') {
+        currentAudioRef.current.play()
+        setTransport('playing')
+      } else {
+        currentAudioRef.current.pause()
+        setTransport('paused')
+      }
+    }
+  }, [transport])
+
+  const handleStop = useCallback(() => {
+    stopRequestedRef.current = true
+    if (currentAudioRef.current) {
+      currentAudioRef.current.pause()
+      currentAudioRef.current = null
+    }
+    setTransport('stopped')
+    setNowPlaying(null)
+    setIterationCount(0)
+    setLastError(null)
+  }, [])
+
+  // ---- File operations ----
+
   const handleNew = () => {
+    if (transport !== 'stopped') handleStop()
     if (isDirty && !confirm('Discard unsaved changes?')) return
     clear()
     setName('Untitled Pipeline')
@@ -136,12 +244,14 @@ export default function Toolbar({ registry }: ToolbarProps) {
   }
 
   const handleOpen = () => {
+    if (transport !== 'stopped') handleStop()
     refetchPipelines()
     setShowOpenDialog(true)
     setShowFileMenu(false)
   }
 
   const loadPipeline = (pipeline: PipelineData) => {
+    if (transport !== 'stopped') handleStop()
     if (isDirty && !confirm('Discard unsaved changes?')) return
     const graph = pipeline.graph_json as { nodes?: unknown[]; edges?: unknown[] }
     const loadedNodes = (graph.nodes || []).map((n: any) => {
@@ -201,52 +311,8 @@ export default function Toolbar({ registry }: ToolbarProps) {
     }
   }
 
-  const handleExecute = async () => {
-    if (!pipelineId) {
-      // Auto-save first, then execute
-      const graphJson = buildGraphJson()
-      try {
-        const saved = await createMutation.mutateAsync({ name, graph_json: graphJson })
-        setPipeline(saved.id, saved.name, nodes, edges)
-        setDirty(false)
-        // Now execute with the new ID
-        const result = await previewMutation.mutateAsync(saved.id)
-        setPreviewResult(result)
-        // Auto-play audio if present
-        if (result.audio_wav_base64) {
-          const audio = new Audio(`data:audio/wav;base64,${result.audio_wav_base64}`)
-          audio.play().catch(() => {})
-        }
-      } catch (e) {
-        setPreviewResult({ error: `${e instanceof Error ? e.message : 'unknown'}` })
-      }
-      return
-    }
-    // Save if dirty, then execute
-    if (isDirty) {
-      try {
-        const graphJson = buildGraphJson()
-        await updateMutation.mutateAsync({ id: pipelineId, name, graph_json: graphJson })
-        setDirty(false)
-      } catch (e) {
-        setPreviewResult({ error: `Save failed: ${e instanceof Error ? e.message : 'unknown'}` })
-        return
-      }
-    }
-    try {
-      const result = await previewMutation.mutateAsync(pipelineId)
-      setPreviewResult(result)
-      // Auto-play audio if present
-      if (result.audio_wav_base64) {
-        const audio = new Audio(`data:audio/wav;base64,${result.audio_wav_base64}`)
-        audio.play().catch(() => {})
-      }
-    } catch (e) {
-      setPreviewResult({ error: `Execution error: ${e instanceof Error ? e.message : 'unknown'}` })
-    }
-  }
-
   const loadTemplate = (tmpl: PipelineData | Template) => {
+    if (transport !== 'stopped') handleStop()
     if (isDirty && !confirm('Discard unsaved changes?')) return
     const graph = tmpl.graph_json as { nodes?: unknown[]; edges?: unknown[] }
     const tmplNodes = (graph.nodes || []).map((n: any) => {
@@ -264,7 +330,6 @@ export default function Toolbar({ registry }: ToolbarProps) {
     setTimeout(() => reactFlow.fitView({ padding: 0.15, duration: 300 }), 50)
   }
 
-  // Export pipeline as JSON file
   const handleExport = () => {
     const graphJson = buildGraphJson()
     const exportData = { name, graph_json: graphJson }
@@ -278,7 +343,6 @@ export default function Toolbar({ registry }: ToolbarProps) {
     setShowFileMenu(false)
   }
 
-  // Import pipeline from JSON file
   const handleImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -308,9 +372,9 @@ export default function Toolbar({ registry }: ToolbarProps) {
     e.target.value = ''
   }
 
-  // Count feedback edges
   const feedbackCount = edges.filter(e => (e.data as Record<string, unknown>)?.edge_type === 'feedback').length
   const isSaving = createMutation.isPending || updateMutation.isPending
+  const isPlaying = transport === 'playing' || transport === 'loading' || transport === 'paused'
 
   return (
     <>
@@ -351,13 +415,7 @@ export default function Toolbar({ registry }: ToolbarProps) {
             </div>
           )}
         </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".json"
-          onChange={handleImport}
-          className="hidden"
-        />
+        <input ref={fileInputRef} type="file" accept=".json" onChange={handleImport} className="hidden" />
 
         {/* Pipeline name */}
         <input
@@ -368,31 +426,17 @@ export default function Toolbar({ registry }: ToolbarProps) {
           placeholder="Pipeline name"
         />
 
-        {isDirty && <span className="text-xs text-amber-500 shrink-0">unsaved</span>}
+        {isDirty && !isPlaying && <span className="text-xs text-amber-500 shrink-0">unsaved</span>}
 
         {/* Undo / Redo */}
         <div className="flex gap-0.5 ml-1">
-          <button
-            onClick={undo}
-            disabled={!canUndo()}
-            className="px-1.5 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded disabled:opacity-30"
-            title="Undo (Ctrl+Z)"
-          >
-            ↶
-          </button>
-          <button
-            onClick={redo}
-            disabled={!canRedo()}
-            className="px-1.5 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded disabled:opacity-30"
-            title="Redo (Ctrl+Shift+Z)"
-          >
-            ↷
-          </button>
+          <button onClick={undo} disabled={!canUndo()} className="px-1.5 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded disabled:opacity-30" title="Undo (Ctrl+Z)">↶</button>
+          <button onClick={redo} disabled={!canRedo()} className="px-1.5 py-1 text-xs text-gray-500 hover:bg-gray-100 rounded disabled:opacity-30" title="Redo (Ctrl+Shift+Z)">↷</button>
         </div>
 
         <div className="w-px h-6 bg-gray-200" />
 
-        {/* Save (quick) */}
+        {/* Save */}
         <button
           onClick={handleSave}
           disabled={isSaving}
@@ -412,47 +456,121 @@ export default function Toolbar({ registry }: ToolbarProps) {
           Check Errors
         </button>
 
-        {/* Execute pipeline */}
-        <button
-          onClick={handleExecute}
-          disabled={previewMutation.isPending || createMutation.isPending || nodes.length === 0}
-          className="px-3 py-1 bg-emerald-600 text-white text-xs font-medium rounded hover:bg-emerald-500 disabled:opacity-50"
-          title="Execute the entire pipeline end-to-end (save first)"
-        >
-          {previewMutation.isPending || createMutation.isPending ? 'Running...' : 'Execute'}
-        </button>
-
         <div className="w-px h-6 bg-gray-200" />
 
-        {/* Templates */}
-        <div className="relative" ref={templateRef}>
-          <button
-            onClick={() => setShowTemplates(!showTemplates)}
-            className="px-3 py-1 bg-white border border-gray-200 text-xs font-medium rounded hover:bg-gray-50"
-          >
-            Templates
-          </button>
-          {showTemplates && templates && (
-            <div className="absolute top-8 left-0 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50 w-72">
-              {templates.map((t) => (
-                <button
-                  key={t.id}
-                  onClick={() => loadTemplate(t)}
-                  className="w-full text-left px-3 py-2 hover:bg-gray-50 text-xs"
-                >
-                  <div className="font-medium text-gray-800">{t.name}</div>
-                  <div className="text-gray-400 text-[10px] mt-0.5 line-clamp-2">{t.description}</div>
-                </button>
-              ))}
-              {templates.length === 0 && (
-                <div className="px-3 py-2 text-xs text-gray-400">No templates yet</div>
-              )}
-            </div>
+        {/* Transport controls */}
+        <div className="flex items-center gap-1">
+          {/* Play */}
+          {transport === 'stopped' ? (
+            <button
+              onClick={handlePlay}
+              disabled={nodes.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1 bg-emerald-600 text-white text-xs font-medium rounded hover:bg-emerald-500 disabled:opacity-50"
+              title="Play — continuously execute pipeline with random utterances"
+            >
+              <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+              </svg>
+              Play
+            </button>
+          ) : (
+            <>
+              {/* Pause / Resume */}
+              <button
+                onClick={handlePause}
+                className={`flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded ${
+                  transport === 'paused'
+                    ? 'bg-emerald-600 text-white hover:bg-emerald-500'
+                    : 'bg-amber-500 text-white hover:bg-amber-400'
+                }`}
+                title={transport === 'paused' ? 'Resume' : 'Pause'}
+              >
+                {transport === 'paused' ? (
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+                  </svg>
+                ) : (
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M5.5 3a1.5 1.5 0 00-1.5 1.5v11A1.5 1.5 0 005.5 17h1A1.5 1.5 0 008 15.5v-11A1.5 1.5 0 006.5 3h-1zm8 0a1.5 1.5 0 00-1.5 1.5v11a1.5 1.5 0 001.5 1.5h1a1.5 1.5 0 001.5-1.5v-11A1.5 1.5 0 0014.5 3h-1z" clipRule="evenodd" />
+                  </svg>
+                )}
+              </button>
+              {/* Stop */}
+              <button
+                onClick={handleStop}
+                className="flex items-center gap-1 px-2.5 py-1 bg-red-500 text-white text-xs font-medium rounded hover:bg-red-400"
+                title="Stop"
+              >
+                <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                  <rect x="4" y="4" width="12" height="12" rx="1.5" />
+                </svg>
+              </button>
+            </>
           )}
         </div>
 
-        {/* Spacer */}
-        <div className="flex-1" />
+        {/* Now-playing info */}
+        {isPlaying && (
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            {transport === 'loading' && (
+              <span className="inline-block w-3 h-3 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin shrink-0" />
+            )}
+            {transport === 'playing' && (
+              <div className="flex gap-0.5 items-end h-3 shrink-0">
+                <div className="w-0.5 bg-emerald-500 animate-pulse" style={{ height: '8px', animationDelay: '0ms' }} />
+                <div className="w-0.5 bg-emerald-500 animate-pulse" style={{ height: '12px', animationDelay: '150ms' }} />
+                <div className="w-0.5 bg-emerald-500 animate-pulse" style={{ height: '6px', animationDelay: '300ms' }} />
+                <div className="w-0.5 bg-emerald-500 animate-pulse" style={{ height: '10px', animationDelay: '100ms' }} />
+              </div>
+            )}
+            {transport === 'paused' && (
+              <span className="text-[10px] text-amber-500 font-medium shrink-0">PAUSED</span>
+            )}
+            <span className="text-[10px] text-gray-500 truncate">
+              {nowPlaying ? `"${nowPlaying}"` : 'Generating...'}
+            </span>
+            {iterationCount > 0 && (
+              <span className="text-[9px] text-gray-300 shrink-0">#{iterationCount}</span>
+            )}
+          </div>
+        )}
+
+        {/* Error display */}
+        {lastError && transport === 'stopped' && (
+          <span className="text-[10px] text-red-500 truncate max-w-xs">{lastError}</span>
+        )}
+
+        {/* Spacer (only when not playing) */}
+        {!isPlaying && <div className="flex-1" />}
+
+        {/* Templates */}
+        {!isPlaying && (
+          <div className="relative" ref={templateRef}>
+            <button
+              onClick={() => setShowTemplates(!showTemplates)}
+              className="px-3 py-1 bg-white border border-gray-200 text-xs font-medium rounded hover:bg-gray-50"
+            >
+              Templates
+            </button>
+            {showTemplates && templates && (
+              <div className="absolute top-8 right-0 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50 w-72">
+                {templates.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => loadTemplate(t)}
+                    className="w-full text-left px-3 py-2 hover:bg-gray-50 text-xs"
+                  >
+                    <div className="font-medium text-gray-800">{t.name}</div>
+                    <div className="text-gray-400 text-[10px] mt-0.5 line-clamp-2">{t.description}</div>
+                  </button>
+                ))}
+                {templates.length === 0 && (
+                  <div className="px-3 py-2 text-xs text-gray-400">No templates yet</div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Stats bar */}
         <div className="flex gap-3 text-[10px] text-gray-400 shrink-0">
@@ -462,8 +580,8 @@ export default function Toolbar({ registry }: ToolbarProps) {
           {pipelineId && <span className="text-blue-400" title={pipelineId}>saved</span>}
         </div>
 
-        {/* Status messages */}
-        {validationMsg && (
+        {/* Validation messages */}
+        {validationMsg && !isPlaying && (
           <span className={`text-xs shrink-0 ml-2 ${validationMsg.startsWith('No errors') || validationMsg === 'Saved!' || validationMsg === 'Imported!' || validationMsg === 'Loaded!' || validationMsg.startsWith('Saved as') ? 'text-green-600' : 'text-red-500'}`}>
             {validationMsg}
           </span>
@@ -517,99 +635,6 @@ export default function Toolbar({ registry }: ToolbarProps) {
                 </div>
               )}
             </div>
-          </div>
-        </div>
-      )}
-
-      {/* Execute result modal */}
-      {previewResult && (
-        <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50" onClick={() => setPreviewResult(null)}>
-          <div className="bg-white rounded-lg shadow-xl p-5 max-w-xl w-full max-h-[80vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-3">
-              <h3 className="text-sm font-bold">Execution Result</h3>
-              <button onClick={() => setPreviewResult(null)} className="text-gray-400 hover:text-gray-600 text-sm">Close</button>
-            </div>
-
-            {/* Error state */}
-            {previewResult.error && !previewResult.success && (
-              <div className="bg-red-50 text-red-700 text-xs rounded p-3 mb-3">{previewResult.error}</div>
-            )}
-
-            {/* Success content */}
-            {previewResult.success && (
-              <div className="space-y-3">
-                {/* Status row */}
-                <div className="flex items-center gap-3 text-xs">
-                  <span className="text-green-600 font-medium">Success</span>
-                  <span className="text-gray-400">|</span>
-                  <span className="text-gray-500">{previewResult.total_latency_ms?.toFixed(0)} ms</span>
-                </div>
-
-                {/* Source text */}
-                {previewResult.source_text && (
-                  <div>
-                    <div className="text-xs font-medium text-gray-600 mb-1">Source Text</div>
-                    <div className="bg-green-50 rounded p-3 text-sm text-gray-800 italic">&ldquo;{previewResult.source_text}&rdquo;</div>
-                  </div>
-                )}
-
-                {/* Audio player */}
-                {previewResult.audio_wav_base64 && (
-                  <div>
-                    <div className="text-xs font-medium text-gray-600 mb-1">Audio Output (auto-playing)</div>
-                    <audio
-                      controls
-                      autoPlay
-                      className="w-full h-10"
-                      src={`data:audio/wav;base64,${previewResult.audio_wav_base64}`}
-                    />
-                  </div>
-                )}
-
-                {/* No audio warning */}
-                {!previewResult.audio_wav_base64 && !previewResult.transcription_text && !previewResult.llm_response_text && (
-                  <div className="bg-yellow-50 text-yellow-700 text-xs rounded p-3">
-                    Pipeline ran but produced no output. Make sure your nodes are connected — wire audio_out → audio_in between nodes.
-                  </div>
-                )}
-
-                {/* Transcription */}
-                {previewResult.transcription_text && (
-                  <div>
-                    <div className="text-xs font-medium text-gray-600 mb-1">Text Output</div>
-                    <div className="bg-gray-50 rounded p-3 text-sm text-gray-800">{previewResult.transcription_text}</div>
-                  </div>
-                )}
-
-                {/* LLM Response */}
-                {previewResult.llm_response_text && (
-                  <div>
-                    <div className="text-xs font-medium text-gray-600 mb-1">LLM Response</div>
-                    <div className="bg-blue-50 rounded p-3 text-sm text-gray-800">{previewResult.llm_response_text}</div>
-                  </div>
-                )}
-
-                {/* Warnings */}
-                {previewResult.error && (
-                  <div className="bg-yellow-50 text-yellow-700 text-xs rounded p-2">{previewResult.error}</div>
-                )}
-
-                {/* Raw JSON toggle */}
-                <details className="text-xs">
-                  <summary className="text-gray-400 cursor-pointer hover:text-gray-600">Raw JSON</summary>
-                  <pre className="font-mono bg-gray-50 rounded p-2 mt-1 whitespace-pre-wrap text-[10px] max-h-40 overflow-auto">
-                    {JSON.stringify({ ...previewResult, audio_wav_base64: previewResult.audio_wav_base64 ? '(base64 data)' : null }, null, 2)}
-                  </pre>
-                </details>
-              </div>
-            )}
-
-            {/* Fallback for non-structured responses */}
-            {!previewResult.success && !previewResult.error && (
-              <pre className="text-xs font-mono bg-gray-50 rounded p-3 whitespace-pre-wrap">
-                {JSON.stringify(previewResult, null, 2)}
-              </pre>
-            )}
           </div>
         </div>
       )}
