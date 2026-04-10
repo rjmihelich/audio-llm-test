@@ -11,6 +11,7 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
     speech: { label: 'Speech', color: '#818CF8' },
     llm: { label: 'LLM', color: '#34D399' },
     evaluation: { label: 'Evaluation', color: '#FB923C' },
+    logic: { label: 'Logic', color: '#67E8F9' },
     output: { label: 'Output', color: '#94A3B8' },
   },
   node_types: {
@@ -427,6 +428,25 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
       config_fields: [
         { name: 'evaluators', type: 'select', label: 'Evaluators', default: 'command_match', options: [{ value: 'command_match', label: 'Command Match' }, { value: 'llm_judge', label: 'LLM Judge' }, { value: 'wer', label: 'WER' }, { value: 'all', label: 'All' }], description: '' },
         { name: 'pass_threshold', type: 'slider', label: 'Pass Threshold', default: 0.6, min: 0, max: 1, step: 0.05, description: '' },
+      ],
+    },
+    router: {
+      type_id: 'router', label: 'Router', category: 'logic', color: '#67E8F9',
+      description: 'Route audio/text to one of N outputs based on a control signal',
+      dynamic_inputs: false,
+      inputs: [
+        { name: 'audio_in', type: 'audio', required: false, description: 'Audio signal to route' },
+        { name: 'text_in', type: 'text', required: false, description: 'Text signal to route' },
+        { name: 'control', type: 'text', required: true, description: 'Route index (0, 1, 2, ... N-1)' },
+      ],
+      outputs: [
+        ...Array.from({ length: 8 }, (_, i) => ({ name: `audio_out_${i}`, type: 'audio' as const, required: false, description: `Audio route ${i}` })),
+        ...Array.from({ length: 8 }, (_, i) => ({ name: `text_out_${i}`, type: 'text' as const, required: false, description: `Text route ${i}` })),
+      ],
+      config_fields: [
+        { name: 'num_routes', type: 'slider', label: 'Number of Routes', default: 2, min: 2, max: 8, step: 1, description: 'How many output routes (2-8)' },
+        { name: 'default_route', type: 'number', label: 'Default Route', default: 0, description: 'Route index when control is missing or invalid' },
+        { name: 'pass_silence', type: 'boolean', label: 'Pass Silence to Inactive', default: false, description: 'Send silence/empty to non-selected routes (vs nothing)' },
       ],
     },
     text_output: {

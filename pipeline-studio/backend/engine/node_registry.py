@@ -70,6 +70,7 @@ CATEGORIES = {
     "speech": {"label": "Speech", "color": "#818CF8"},
     "llm": {"label": "LLM", "color": "#34D399"},
     "evaluation": {"label": "Evaluation", "color": "#FB923C"},
+    "logic": {"label": "Logic", "color": "#67E8F9"},
     "output": {"label": "Output", "color": "#94A3B8"},
 }
 
@@ -931,6 +932,40 @@ def _build_registry() -> dict[str, NodeTypeDef]:
                         multiline=True),
         ],
         color="#FB923C",
+    ))
+
+    # -----------------------------------------------------------------------
+    # LOGIC BLOCKS
+    # -----------------------------------------------------------------------
+    _router_audio_outs = [
+        PortDef(f"audio_out_{i}", PortType.audio, required=False, description=f"Audio route {i}")
+        for i in range(8)
+    ]
+    _router_text_outs = [
+        PortDef(f"text_out_{i}", PortType.text, required=False, description=f"Text route {i}")
+        for i in range(8)
+    ]
+    nodes.append(NodeTypeDef(
+        type_id="router",
+        label="Router",
+        category="logic",
+        description="Route audio/text to one of N outputs based on a control signal",
+        inputs=[
+            PortDef("audio_in", PortType.audio, required=False, description="Audio signal to route"),
+            PortDef("text_in", PortType.text, required=False, description="Text signal to route"),
+            PortDef("control", PortType.text, required=True, description="Route index (0, 1, 2, ... N-1)"),
+        ],
+        outputs=[*_router_audio_outs, *_router_text_outs],
+        config_fields=[
+            ConfigField("num_routes", "slider", "Number of Routes", 2,
+                        min_val=2, max_val=8, step=1,
+                        description="How many output routes (2–8)"),
+            ConfigField("default_route", "number", "Default Route", 0,
+                        description="Route index when control is missing or invalid"),
+            ConfigField("pass_silence", "boolean", "Pass Silence to Inactive", False,
+                        description="Send silence/empty to non-selected routes (vs nothing)"),
+        ],
+        color="#67E8F9",
     ))
 
     # -----------------------------------------------------------------------

@@ -46,6 +46,16 @@ export default function BaseNode({ data, selected, id }: NodeProps) {
 
   const allInputs = [...inputs, ...dynamicInputs]
 
+  // For router nodes, only show outputs matching num_routes config
+  let visibleOutputs = outputs
+  if (d.type_id === 'router') {
+    const numRoutes = Number(d.config?.num_routes ?? 2)
+    visibleOutputs = outputs.filter((p) => {
+      const match = p.name.match(/_(\d+)$/)
+      return match ? parseInt(match[1]) < numRoutes : true
+    })
+  }
+
   return (
     <div
       className={`bg-white border-2 rounded-lg shadow-sm min-w-[160px] ${
@@ -68,6 +78,9 @@ export default function BaseNode({ data, selected, id }: NodeProps) {
         )}
         {d.type_id === 'mixer' && (
           <div className="text-gray-700 font-medium">Master: {String(d.config?.master_gain_db ?? 0)} dB</div>
+        )}
+        {d.type_id === 'router' && (
+          <div className="text-gray-700 font-medium">{String(d.config?.num_routes ?? 2)} routes</div>
         )}
         {d.type_id === 'llm' && (
           <>
@@ -125,7 +138,7 @@ export default function BaseNode({ data, selected, id }: NodeProps) {
         ))}
 
         {/* Output handles */}
-        {outputs.map((port, i) => (
+        {visibleOutputs.map((port, i) => (
           <Handle
             key={port.name}
             type="source"
@@ -151,7 +164,7 @@ export default function BaseNode({ data, selected, id }: NodeProps) {
             ))}
           </div>
           <div className="space-y-0.5 text-right">
-            {outputs.map((p) => (
+            {visibleOutputs.map((p) => (
               <div key={p.name} className="text-[9px] text-gray-400">{p.name}</div>
             ))}
           </div>

@@ -36,6 +36,8 @@ _EXECUTOR_MAP: dict[str, str] = {
     # llm
     "llm": "llm_nodes",
     "llm_realtime": "llm_nodes",
+    # logic
+    "router": "logic_nodes",
     # evaluation
     "eval_analysis": "eval_nodes",
     "safety_critical_eval": "content_safety_nodes",
