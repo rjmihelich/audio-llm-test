@@ -428,7 +428,7 @@ function HistogramDisplay({ nodeId, config }: { nodeId: string; config: Record<s
 }
 
 function HistogramPopupButton({ nodeId }: { nodeId: string }) {
-  const isOpen = useGraphStore((s) => s.openHistograms.includes(nodeId))
+  const isOpen = useGraphStore((s) => (s.openHistograms || []).includes(nodeId))
   const toggleHistogram = useGraphStore((s) => s.toggleHistogram)
 
   return (

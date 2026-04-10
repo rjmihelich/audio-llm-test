@@ -13,7 +13,7 @@ import { useGraphStore } from './hooks/useGraphStore'
 
 export default function PipelineStudio() {
   const { data: registry, isLoading } = useNodeTypes()
-  const openHistograms = useGraphStore((s) => s.openHistograms)
+  const openHistograms = useGraphStore((s) => s.openHistograms || [])
 
   return (
     <ReactFlowProvider>
