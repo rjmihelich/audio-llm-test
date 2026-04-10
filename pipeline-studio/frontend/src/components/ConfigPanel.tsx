@@ -303,8 +303,10 @@ function ModelStatusIndicator({ nodeId }: { nodeId: string }) {
   )
 }
 
+const EMPTY_LOG: string[] = []
+
 function OutputLog({ nodeId }: { nodeId: string }) {
-  const outputLog = useGraphStore((s) => (s.outputLogs || {})[nodeId] || [])
+  const outputLog = useGraphStore((s) => s.outputLogs?.[nodeId] ?? EMPTY_LOG)
   const clearOutputLog = useGraphStore((s) => s.clearOutputLog)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -350,7 +352,7 @@ function OutputLog({ nodeId }: { nodeId: string }) {
 }
 
 function HistogramDisplay({ nodeId, config }: { nodeId: string; config: Record<string, unknown> }) {
-  const data = useGraphStore((s) => (s.histogramData || {})[nodeId] || [])
+  const data = useGraphStore((s) => s.histogramData?.[nodeId] ?? EMPTY_LOG)
   const clearData = useGraphStore((s) => s.clearHistogramData)
   const mode = String(config.mode || 'binary')
 
@@ -428,7 +430,7 @@ function HistogramDisplay({ nodeId, config }: { nodeId: string; config: Record<s
 }
 
 function HistogramPopupButton({ nodeId }: { nodeId: string }) {
-  const isOpen = useGraphStore((s) => (s.openHistograms || []).includes(nodeId))
+  const isOpen = useGraphStore((s) => s.openHistograms?.includes(nodeId) ?? false)
   const toggleHistogram = useGraphStore((s) => s.toggleHistogram)
 
   return (

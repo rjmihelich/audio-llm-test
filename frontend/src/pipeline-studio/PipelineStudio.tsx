@@ -50,9 +50,11 @@ class PipelineErrorBoundary extends Component<
   }
 }
 
+const EMPTY_ARRAY: string[] = []
+
 export default function PipelineStudio() {
   const { data: registry, isLoading } = useNodeTypes()
-  const openHistograms = useGraphStore((s) => s.openHistograms || [])
+  const openHistograms = useGraphStore((s) => s.openHistograms ?? EMPTY_ARRAY)
 
   return (
     <PipelineErrorBoundary>

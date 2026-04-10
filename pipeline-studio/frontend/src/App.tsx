@@ -1,6 +1,7 @@
 /** Pipeline Studio — embedded as a page within the main app */
 
 import '@xyflow/react/dist/style.css'
+
 import { Component, type ReactNode } from 'react'
 import { ReactFlowProvider } from '@xyflow/react'
 import Canvas from './components/Canvas'
@@ -49,9 +50,11 @@ class PipelineErrorBoundary extends Component<
   }
 }
 
+const EMPTY_ARRAY: string[] = []
+
 export default function PipelineStudio() {
   const { data: registry, isLoading } = useNodeTypes()
-  const openHistograms = useGraphStore((s) => s.openHistograms || [])
+  const openHistograms = useGraphStore((s) => s.openHistograms ?? EMPTY_ARRAY)
 
   return (
     <PipelineErrorBoundary>

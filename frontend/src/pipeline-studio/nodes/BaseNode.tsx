@@ -16,15 +16,15 @@ export default function BaseNode({ data, selected, id }: NodeProps) {
   const d = data as unknown as BaseNodeData
   const nodeDef = d.nodeDef
   const modelStatus = useGraphStore((s) =>
-    (d.type_id === 'llm' || d.type_id === 'llm_realtime') ? (s.modelStatus || {})[id] : undefined
+    (d.type_id === 'llm' || d.type_id === 'llm_realtime') ? s.modelStatus?.[id] : undefined
   )
   const routerActiveRoute = useGraphStore((s) =>
-    d.type_id === 'router' ? (s.routerStates || {})[id] : undefined
+    d.type_id === 'router' ? s.routerStates?.[id] : undefined
   )
   const evalState = useGraphStore((s) => {
     const isEval = ['eval_analysis', 'safety_critical_eval', 'compliance_eval',
       'trust_brand_eval', 'ux_quality_eval', 'eval_output'].includes(d.type_id)
-    return isEval ? (s.evalStates || {})[id] : undefined
+    return isEval ? s.evalStates?.[id] : undefined
   })
 
   if (!nodeDef) {

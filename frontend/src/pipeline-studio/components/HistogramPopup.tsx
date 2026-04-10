@@ -7,8 +7,10 @@ interface HistogramPopupProps {
   nodeId: string
 }
 
+const EMPTY_DATA: string[] = []
+
 export default function HistogramPopup({ nodeId }: HistogramPopupProps) {
-  const data = useGraphStore((s) => (s.histogramData || {})[nodeId] || [])
+  const data = useGraphStore((s) => s.histogramData?.[nodeId] ?? EMPTY_DATA)
   const clearData = useGraphStore((s) => s.clearHistogramData)
   const closeHistogram = useGraphStore((s) => s.closeHistogram)
   const nodes = useGraphStore((s) => s.nodes)
