@@ -281,10 +281,10 @@ async def preview_node(
                 if entry:
                     text = entry.text
             if not text and category:
-                # Random entry from this category
+                # Random English entry from this category
                 result = await session.execute(
                     select(CorpusEntry)
-                    .where(CorpusEntry.category == category)
+                    .where(CorpusEntry.category == category, CorpusEntry.language == "en")
                     .order_by(func.random())
                     .limit(1)
                 )
@@ -292,9 +292,12 @@ async def preview_node(
                 if entry:
                     text = entry.text
             if not text:
-                # Any random entry
+                # Any random English entry
                 result = await session.execute(
-                    select(CorpusEntry).order_by(func.random()).limit(1)
+                    select(CorpusEntry)
+                    .where(CorpusEntry.language == "en")
+                    .order_by(func.random())
+                    .limit(1)
                 )
                 entry = result.scalar_one_or_none()
                 if entry:
