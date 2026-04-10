@@ -160,7 +160,8 @@ export default function Toolbar({ registry }: ToolbarProps) {
       setIterationCount((c) => c + 1)
 
       // Push text results to output log for text_output sidebar
-      const textOut = result.transcription_text || result.llm_response_text || result.source_text
+      // Prefer text_output_text (what actually arrived at the Text Output node)
+      const textOut = result.text_output_text || result.transcription_text || result.llm_response_text || result.source_text
       if (textOut) {
         useGraphStore.getState().appendOutputLog(textOut)
       }

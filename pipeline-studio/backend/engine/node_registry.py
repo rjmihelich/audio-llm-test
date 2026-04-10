@@ -87,7 +87,10 @@ def _build_registry() -> dict[str, NodeTypeDef]:
         category="sources",
         description="Plays corpus samples (random from category if none specified), pre-recorded samples, or files",
         inputs=[],
-        outputs=[PortDef("audio_out", PortType.audio)],
+        outputs=[
+            PortDef("audio_out", PortType.audio),
+            PortDef("text_out", PortType.text, description="Original corpus/source text"),
+        ],
         config_fields=[
             ConfigField("source_mode", "select", "Source", "corpus_entry",
                         options=[
@@ -723,7 +726,10 @@ def _build_registry() -> dict[str, NodeTypeDef]:
         category="sources",
         description="Far-end caller audio with timing offset for 2-way telephony",
         inputs=[],
-        outputs=[PortDef("audio_out", PortType.audio, description="Far-end speech signal")],
+        outputs=[
+            PortDef("audio_out", PortType.audio, description="Far-end speech signal"),
+            PortDef("text_out", PortType.text, description="Original corpus/source text"),
+        ],
         config_fields=[
             ConfigField("source_mode", "select", "Source", "pipeline_input",
                         options=[

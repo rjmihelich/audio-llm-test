@@ -494,6 +494,9 @@ async def _execute_graph(
             )
             audio_wav_base64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
+        # text_output sink text (most specific — what the user wired to Text Output)
+        text_output_text = getattr(pipeline_result, "_text_output_text", None)
+
         return {
             "success": True,
             "pipeline_type": pipeline_result.pipeline_type,
@@ -503,6 +506,7 @@ async def _execute_graph(
             "has_transcription": pipeline_result.transcription is not None,
             "llm_response_text": pipeline_result.llm_response.text if pipeline_result.llm_response else None,
             "transcription_text": pipeline_result.transcription.text if pipeline_result.transcription else None,
+            "text_output_text": text_output_text,
             "audio_wav_base64": audio_wav_base64,
             "source_text": speech_text,
             "error": pipeline_result.error,

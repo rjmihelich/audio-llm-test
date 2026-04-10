@@ -432,6 +432,9 @@ class GraphPipeline:
 
             # Capture text_output sink nodes
             if node.type_id == "text_output" and "_text" in node_outputs:
+                # Store in dedicated attribute for the API to return
+                if not hasattr(result, "_text_output_text"):
+                    result._text_output_text = node_outputs["_text"]
                 if not result.transcription:
                     from backend.app.llm.base import Transcription
                     result.transcription = Transcription(
