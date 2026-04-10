@@ -210,66 +210,151 @@ async def validate_graph_inline(body: dict[str, Any]):
 
 
 @router.post("/preview-node")
-async def preview_node(body: dict[str, Any]):
-    """Execute a single node in isolation and return audio as WAV.
+async def preview_node(
+    body: dict[str, Any],
+    session: AsyncSession = Depends(get_session),
+):
+    """Execute a single source node and return audio as WAV.
 
-    Used by the Preview button on source nodes (speech_source, noise_generator,
-    far_end_source) to audition their output without running the full pipeline.
+    For speech_source in corpus_entry mode: queries the corpus DB for a random
+    entry matching the selected category, synthesizes via TTS, returns audio.
+    For noise_generator: generates noise audio directly.
     """
-    import base64
     import io
+    import logging
 
     import numpy as np
     import soundfile as sf
+    from sqlalchemy.sql.expression import func
 
     from backend.app.audio.types import AudioBuffer
-    from backend.app.pipeline.base import PipelineInput
-    from ..engine.graph_executor import ExecutionContext, GraphNode
-    from ..nodes import get_default_executor
+    from backend.app.models.speech import CorpusEntry, SpeechSample
+    from starlette.responses import Response
+
+    log = logging.getLogger(__name__)
 
     type_id = body.get("type_id", "")
     config = body.get("config", {})
-    node_id = body.get("node_id", "preview")
 
-    # Build a minimal execution context with a short dummy speech buffer
-    sample_rate = 16000
-    duration = 3.0
-    t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
-    # Simple sine sweep as a recognizable placeholder for corpus_entry mode
-    dummy_samples = (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float64)
-    dummy_audio = AudioBuffer(samples=dummy_samples, sample_rate=sample_rate)
-
-    pipeline_input = PipelineInput(
-        clean_speech=dummy_audio,
-        original_text="Preview test sentence",
-        expected_intent="preview",
-        expected_action="preview",
-    )
-    ctx = ExecutionContext(pipeline_input=pipeline_input)
-    node = GraphNode(id=node_id, type_id=type_id, config=config)
-
-    try:
-        executor = get_default_executor(type_id)
-        result = await executor(node, {}, config, ctx)
-    except Exception as e:
-        raise HTTPException(500, f"Node execution failed: {e}")
-
-    # Find the audio output from the result
     audio: AudioBuffer | None = None
-    for key in ("audio_out", "audio"):
-        if key in result and isinstance(result[key], AudioBuffer):
-            audio = result[key]
-            break
+
+    # ---- speech_source ----
+    if type_id in ("speech_source", "far_end_source"):
+        mode = config.get("source_mode", "corpus_entry")
+
+        if mode == "file":
+            path = config.get("file_path", "")
+            if not path:
+                raise HTTPException(422, "file_path is required for file mode")
+            from backend.app.audio.io import load_audio
+            audio = load_audio(path, target_sample_rate=16000)
+
+        elif mode == "speech_sample":
+            # Load a pre-recorded speech sample by ID
+            sample_id = config.get("speech_sample_id", "")
+            if not sample_id:
+                raise HTTPException(422, "speech_sample_id is required")
+            result = await session.execute(
+                select(SpeechSample).where(
+                    SpeechSample.id == uuid.UUID(sample_id),
+                    SpeechSample.status == "ready",
+                )
+            )
+            sample = result.scalar_one_or_none()
+            if not sample:
+                raise HTTPException(404, "Speech sample not found or not ready")
+            from backend.app.audio.io import load_audio
+            audio = load_audio(sample.file_path, target_sample_rate=16000)
+
+        else:
+            # corpus_entry mode (default) — pick text from corpus, synthesize
+            category = config.get("corpus_category", "")
+            entry_id = config.get("corpus_entry_id", "")
+
+            # Get the text to speak
+            text: str | None = None
+            if entry_id:
+                result = await session.execute(
+                    select(CorpusEntry).where(CorpusEntry.id == uuid.UUID(entry_id))
+                )
+                entry = result.scalar_one_or_none()
+                if entry:
+                    text = entry.text
+            if not text and category:
+                # Random entry from this category
+                result = await session.execute(
+                    select(CorpusEntry)
+                    .where(CorpusEntry.category == category)
+                    .order_by(func.random())
+                    .limit(1)
+                )
+                entry = result.scalar_one_or_none()
+                if entry:
+                    text = entry.text
+            if not text:
+                # Any random entry
+                result = await session.execute(
+                    select(CorpusEntry).order_by(func.random()).limit(1)
+                )
+                entry = result.scalar_one_or_none()
+                if entry:
+                    text = entry.text
+            if not text:
+                text = "The quick brown fox jumps over the lazy dog"
+
+            # Synthesize via TTS
+            provider_name = config.get("tts_provider", "edge")
+            voice_id = config.get("voice_id", "")
+            try:
+                from backend.app.api.speech import _load_tts_provider
+                tts = _load_tts_provider(provider_name)
+                if tts is None:
+                    raise ValueError(f"TTS provider '{provider_name}' not available")
+                # Pick a default voice if none specified
+                if not voice_id:
+                    voices = await tts.list_voices()
+                    voice_id = voices[0].voice_id if voices else "en-US-AriaNeural"
+                audio = await tts.synthesize(text, voice_id)
+                log.info("Preview TTS: '%s' via %s/%s → %.1fs", text, provider_name, voice_id, audio.duration_s)
+            except Exception as e:
+                log.warning("TTS preview failed (%s), falling back to silence: %s", provider_name, e)
+                raise HTTPException(500, f"TTS synthesis failed: {e}")
+
+    # ---- noise_generator ----
+    elif type_id == "noise_generator":
+        from backend.app.audio.noise import (
+            white_noise, pink_noise, pink_noise_filtered, babble_noise,
+        )
+
+        noise_type = config.get("noise_type", "pink_lpf")
+        seed = config.get("seed")
+        if seed is not None:
+            seed = int(seed)
+        duration_s = float(config.get("duration_s", 3))
+        if duration_s <= 0:
+            duration_s = 3.0
+        sample_rate = 16000
+
+        noise_fns = {
+            "white": lambda: white_noise(duration_s, sample_rate=sample_rate, seed=seed),
+            "pink": lambda: pink_noise(duration_s, sample_rate=sample_rate, seed=seed),
+            "pink_lpf": lambda: pink_noise_filtered(duration_s, sample_rate=sample_rate, seed=seed),
+            "babble": lambda: babble_noise(duration_s, sample_rate=sample_rate, seed=seed),
+        }
+        fn = noise_fns.get(noise_type, noise_fns["pink_lpf"])
+        audio = fn()
+
+    else:
+        raise HTTPException(422, f"Preview not supported for node type '{type_id}'")
 
     if audio is None:
-        raise HTTPException(422, "Node did not produce audio output")
+        raise HTTPException(500, "No audio generated")
 
     # Encode as WAV
     buf = io.BytesIO()
     sf.write(buf, audio.samples, audio.sample_rate, format="WAV", subtype="PCM_16")
     buf.seek(0)
 
-    from starlette.responses import Response
     return Response(
         content=buf.read(),
         media_type="audio/wav",
