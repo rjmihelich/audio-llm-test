@@ -13,6 +13,15 @@ from backend.app.audio.io import load_audio
 from ..engine.graph_executor import ExecutionContext, GraphNode
 
 
+def _apply_level(audio: AudioBuffer, config: dict) -> AudioBuffer:
+    """Apply level_db gain from config if non-zero."""
+    level_db = float(config.get("level_db", 0))
+    if level_db == 0:
+        return audio
+    gain_linear = 10 ** (level_db / 20.0)
+    return AudioBuffer(samples=audio.samples * gain_linear, sample_rate=audio.sample_rate)
+
+
 async def execute_speech_source(
     node: GraphNode, inputs: dict[str, Any], config: dict, ctx: ExecutionContext
 ) -> dict[str, Any]:
@@ -20,16 +29,16 @@ async def execute_speech_source(
     mode = config.get("source_mode", "pipeline_input")
 
     if mode == "pipeline_input":
-        return {"audio_out": ctx.pipeline_input.clean_speech}
+        return {"audio_out": _apply_level(ctx.pipeline_input.clean_speech, config)}
     elif mode == "file":
         path = config.get("file_path", "")
         audio = load_audio(path, target_sample_rate=16000)
-        return {"audio_out": audio}
+        return {"audio_out": _apply_level(audio, config)}
     elif mode == "corpus_entry":
         # For corpus entries, we'd need DB access — fall back to pipeline input for now
-        return {"audio_out": ctx.pipeline_input.clean_speech}
+        return {"audio_out": _apply_level(ctx.pipeline_input.clean_speech, config)}
     else:
-        return {"audio_out": ctx.pipeline_input.clean_speech}
+        return {"audio_out": _apply_level(ctx.pipeline_input.clean_speech, config)}
 
 
 async def execute_noise_generator(

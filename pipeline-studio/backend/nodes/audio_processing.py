@@ -17,9 +17,8 @@ from ..engine.graph_executor import ExecutionContext, GraphNode
 async def execute_mixer(
     node: GraphNode, inputs: dict[str, Any], config: dict, ctx: ExecutionContext
 ) -> dict[str, Any]:
-    """Mix N audio inputs at SNR."""
-    snr_db = config.get("snr_db", 20.0)
-    mode = config.get("mixing_mode", "snr")
+    """Mix N audio inputs with per-channel gain and master output."""
+    master_gain_db = float(config.get("master_gain_db", 0))
 
     # Collect audio inputs
     audio_inputs = inputs.get("_audio_inputs", [])
@@ -33,15 +32,22 @@ async def execute_mixer(
         raise ValueError("Mixer node: no audio inputs connected")
 
     if len(audio_inputs) == 1:
+        gain_db = float(config.get("gain_0_db", 0)) + master_gain_db
+        if gain_db != 0:
+            gain_linear = 10 ** (gain_db / 20.0)
+            return {"audio_out": AudioBuffer(
+                samples=audio_inputs[0].samples * gain_linear,
+                sample_rate=audio_inputs[0].sample_rate,
+            )}
         return {"audio_out": audio_inputs[0]}
 
-    if mode == "snr" and len(audio_inputs) == 2:
-        mixed = mix_at_snr(audio_inputs[0], audio_inputs[1], snr_db)
-    else:
-        # Equal gain mixing for N inputs
-        gains = [1.0 / len(audio_inputs)] * len(audio_inputs)
-        mixed = mix_signals(audio_inputs, gains)
+    # Build per-channel gain list from config
+    gains_db = []
+    for i in range(len(audio_inputs)):
+        g = float(config.get(f"gain_{i}_db", 0))
+        gains_db.append(g + master_gain_db)
 
+    mixed = mix_signals(audio_inputs, gains_db)
     return {"audio_out": mixed}
 
 
