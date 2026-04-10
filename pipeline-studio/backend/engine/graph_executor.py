@@ -356,15 +356,11 @@ class GraphPipeline:
                     logger.info("Skipping %s (%s) — upstream timed out", nid, node.type_id)
                     return nid, {"_timed_out": True}
 
-                # Skip if upstream was skipped (inactive router route)
-                if any(isinstance(v, dict) and v.get("_skipped") for v in node_inputs.values()):
+                # Skip if any upstream node was skipped or this is on an inactive route.
+                # _gather_inputs won't propagate _skipped because handle names don't match,
+                # so we check upstream outputs directly.
+                if self._has_skipped_upstream(nid, outputs):
                     logger.info("Skipping %s (%s) — upstream skipped (inactive route)", nid, node.type_id)
-                    return nid, {"_skipped": True}
-
-                # Skip if this node is on an inactive router route:
-                # check if any incoming edge comes from a router output that wasn't produced
-                if self._is_on_inactive_route(nid, outputs):
-                    logger.info("Skipping %s (%s) — on inactive router route", nid, node.type_id)
                     return nid, {"_skipped": True}
 
                 config = dict(node.config)
@@ -470,35 +466,35 @@ class GraphPipeline:
 
         return inputs
 
-    def _is_on_inactive_route(
+    def _has_skipped_upstream(
         self,
         node_id: str,
         outputs: dict[str, dict[str, Any]],
     ) -> bool:
-        """Check if a node is downstream of a router's inactive route.
+        """Check if a node should be skipped due to inactive router routing.
 
-        Returns True if every incoming edge from a router points to an output
-        handle that wasn't produced (i.e., the route is inactive), AND the node
-        has at least one such edge.
+        Two cases:
+        1. Direct: an incoming edge comes from a router that didn't produce
+           the connected output handle (inactive route).
+        2. Transitive: an upstream node was already marked _skipped.
         """
-        router_edges = []
         for edge in self._graph.forward_edges:
             if edge.target != node_id:
                 continue
+
+            src_outputs = outputs.get(edge.source, {})
+
+            # Case 2: upstream was skipped — propagate
+            if src_outputs.get("_skipped"):
+                return True
+
+            # Case 1: upstream is a router and this handle wasn't produced
             src_node = self._graph.nodes.get(edge.source)
             if src_node and src_node.type_id == "router":
-                router_edges.append(edge)
+                if edge.source_handle not in src_outputs:
+                    return True
 
-        if not router_edges:
-            return False
-
-        # If ALL router edges point to handles that weren't produced, skip
-        for edge in router_edges:
-            src_outputs = outputs.get(edge.source, {})
-            if edge.source_handle in src_outputs:
-                return False  # At least one router edge delivered data
-
-        return True
+        return False
 
     def _collect_feedback(self, outputs: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
         """Collect output values that feed into feedback edges."""
