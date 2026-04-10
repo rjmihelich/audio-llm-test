@@ -209,6 +209,74 @@ async def validate_graph_inline(body: dict[str, Any]):
     }
 
 
+@router.post("/preview-node")
+async def preview_node(body: dict[str, Any]):
+    """Execute a single node in isolation and return audio as WAV.
+
+    Used by the Preview button on source nodes (speech_source, noise_generator,
+    far_end_source) to audition their output without running the full pipeline.
+    """
+    import base64
+    import io
+
+    import numpy as np
+    import soundfile as sf
+
+    from backend.app.audio.types import AudioBuffer
+    from backend.app.pipeline.base import PipelineInput
+    from ..engine.graph_executor import ExecutionContext, GraphNode
+    from ..nodes import get_default_executor
+
+    type_id = body.get("type_id", "")
+    config = body.get("config", {})
+    node_id = body.get("node_id", "preview")
+
+    # Build a minimal execution context with a short dummy speech buffer
+    sample_rate = 16000
+    duration = 3.0
+    t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
+    # Simple sine sweep as a recognizable placeholder for corpus_entry mode
+    dummy_samples = (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float64)
+    dummy_audio = AudioBuffer(samples=dummy_samples, sample_rate=sample_rate)
+
+    pipeline_input = PipelineInput(
+        clean_speech=dummy_audio,
+        original_text="Preview test sentence",
+        expected_intent="preview",
+        expected_action="preview",
+    )
+    ctx = ExecutionContext(pipeline_input=pipeline_input)
+    node = GraphNode(id=node_id, type_id=type_id, config=config)
+
+    try:
+        executor = get_default_executor(type_id)
+        result = await executor(node, {}, config, ctx)
+    except Exception as e:
+        raise HTTPException(500, f"Node execution failed: {e}")
+
+    # Find the audio output from the result
+    audio: AudioBuffer | None = None
+    for key in ("audio_out", "audio"):
+        if key in result and isinstance(result[key], AudioBuffer):
+            audio = result[key]
+            break
+
+    if audio is None:
+        raise HTTPException(422, "Node did not produce audio output")
+
+    # Encode as WAV
+    buf = io.BytesIO()
+    sf.write(buf, audio.samples, audio.sample_rate, format="WAV", subtype="PCM_16")
+    buf.seek(0)
+
+    from starlette.responses import Response
+    return Response(
+        content=buf.read(),
+        media_type="audio/wav",
+        headers={"Content-Disposition": f'inline; filename="preview_{type_id}.wav"'},
+    )
+
+
 @router.post("/{pipeline_id}/execute-preview")
 async def execute_preview(
     pipeline_id: str,
