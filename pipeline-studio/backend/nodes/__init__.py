@@ -40,6 +40,10 @@ _EXECUTOR_MAP: dict[str, str] = {
     "llm_realtime": "llm_nodes",
     # evaluation
     "eval_analysis": "eval_nodes",
+    "safety_critical_eval": "content_safety_nodes",
+    "compliance_eval": "content_safety_nodes",
+    "trust_brand_eval": "content_safety_nodes",
+    "ux_quality_eval": "content_safety_nodes",
     # outputs
     "text_output": "eval_nodes",
     "audio_output": "eval_nodes",

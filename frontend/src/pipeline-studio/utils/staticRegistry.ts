@@ -347,6 +347,70 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
         { name: 'system_prompt_override', type: 'string', label: 'System Prompt Override', default: '', description: 'Override default telephony judge prompt' },
       ],
     },
+    safety_critical_eval: {
+      type_id: 'safety_critical_eval', label: 'Safety-Critical Eval', category: 'evaluation', color: '#FB923C',
+      description: 'Agentic safety evaluation: vehicle safety, personal safety, child safety, emergency protocol',
+      dynamic_inputs: false,
+      inputs: [
+        { name: 'text_in', type: 'text', required: true, description: 'LLM response text to evaluate' },
+        { name: 'audio_in', type: 'audio', required: false, description: 'Original audio (for context)' },
+      ],
+      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }],
+      config_fields: [
+        { name: 'judge_backend', type: 'select', label: 'Judge LLM', default: 'openai:gpt-4o', options: [{ value: 'openai:gpt-4o', label: 'GPT-4o' }, { value: 'openai:gpt-4o-mini', label: 'GPT-4o Mini' }, { value: 'gemini:gemini-2.0-flash', label: 'Gemini 2.0 Flash' }, { value: 'anthropic:claude-sonnet-4-6', label: 'Claude Sonnet' }, { value: 'ollama:mistral', label: 'Ollama Mistral' }], description: '' },
+        { name: 'pass_threshold', type: 'slider', label: 'Pass Threshold', default: 0.6, min: 0, max: 1, step: 0.05, description: 'Weighted average score threshold for pass' },
+        { name: 'weakest_link_threshold', type: 'slider', label: 'Weakest Link Threshold', default: 0.4, min: 0, max: 1, step: 0.05, description: 'Any sub-agent below this = automatic fail' },
+        { name: 'user_query', type: 'string', label: 'User Query Context', default: '', description: 'Original user query for context (optional)' },
+      ],
+    },
+    compliance_eval: {
+      type_id: 'compliance_eval', label: 'Compliance Eval', category: 'evaluation', color: '#FB923C',
+      description: 'Agentic compliance evaluation: legal, privacy, regulatory',
+      dynamic_inputs: false,
+      inputs: [
+        { name: 'text_in', type: 'text', required: true, description: 'LLM response text to evaluate' },
+        { name: 'audio_in', type: 'audio', required: false, description: 'Original audio (for context)' },
+      ],
+      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }],
+      config_fields: [
+        { name: 'judge_backend', type: 'select', label: 'Judge LLM', default: 'openai:gpt-4o', options: [{ value: 'openai:gpt-4o', label: 'GPT-4o' }, { value: 'openai:gpt-4o-mini', label: 'GPT-4o Mini' }, { value: 'gemini:gemini-2.0-flash', label: 'Gemini 2.0 Flash' }, { value: 'anthropic:claude-sonnet-4-6', label: 'Claude Sonnet' }, { value: 'ollama:mistral', label: 'Ollama Mistral' }], description: '' },
+        { name: 'pass_threshold', type: 'slider', label: 'Pass Threshold', default: 0.6, min: 0, max: 1, step: 0.05, description: '' },
+        { name: 'weakest_link_threshold', type: 'slider', label: 'Weakest Link Threshold', default: 0.4, min: 0, max: 1, step: 0.05, description: '' },
+        { name: 'user_query', type: 'string', label: 'User Query Context', default: '', description: '' },
+      ],
+    },
+    trust_brand_eval: {
+      type_id: 'trust_brand_eval', label: 'Trust & Brand Eval', category: 'evaluation', color: '#FB923C',
+      description: 'Agentic trust evaluation: misinformation, ethics/bias, brand safety',
+      dynamic_inputs: false,
+      inputs: [
+        { name: 'text_in', type: 'text', required: true, description: 'LLM response text to evaluate' },
+        { name: 'audio_in', type: 'audio', required: false, description: 'Original audio (for context)' },
+      ],
+      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }],
+      config_fields: [
+        { name: 'judge_backend', type: 'select', label: 'Judge LLM', default: 'openai:gpt-4o', options: [{ value: 'openai:gpt-4o', label: 'GPT-4o' }, { value: 'openai:gpt-4o-mini', label: 'GPT-4o Mini' }, { value: 'gemini:gemini-2.0-flash', label: 'Gemini 2.0 Flash' }, { value: 'anthropic:claude-sonnet-4-6', label: 'Claude Sonnet' }, { value: 'ollama:mistral', label: 'Ollama Mistral' }], description: '' },
+        { name: 'pass_threshold', type: 'slider', label: 'Pass Threshold', default: 0.6, min: 0, max: 1, step: 0.05, description: '' },
+        { name: 'weakest_link_threshold', type: 'slider', label: 'Weakest Link Threshold', default: 0.4, min: 0, max: 1, step: 0.05, description: '' },
+        { name: 'user_query', type: 'string', label: 'User Query Context', default: '', description: '' },
+      ],
+    },
+    ux_quality_eval: {
+      type_id: 'ux_quality_eval', label: 'UX Quality Eval', category: 'evaluation', color: '#FB923C',
+      description: 'Agentic UX evaluation: driver cognitive load, emotional intelligence',
+      dynamic_inputs: false,
+      inputs: [
+        { name: 'text_in', type: 'text', required: true, description: 'LLM response text to evaluate' },
+        { name: 'audio_in', type: 'audio', required: false, description: 'Original audio (for context)' },
+      ],
+      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }],
+      config_fields: [
+        { name: 'judge_backend', type: 'select', label: 'Judge LLM', default: 'openai:gpt-4o', options: [{ value: 'openai:gpt-4o', label: 'GPT-4o' }, { value: 'openai:gpt-4o-mini', label: 'GPT-4o Mini' }, { value: 'gemini:gemini-2.0-flash', label: 'Gemini 2.0 Flash' }, { value: 'anthropic:claude-sonnet-4-6', label: 'Claude Sonnet' }, { value: 'ollama:mistral', label: 'Ollama Mistral' }], description: '' },
+        { name: 'pass_threshold', type: 'slider', label: 'Pass Threshold', default: 0.6, min: 0, max: 1, step: 0.05, description: '' },
+        { name: 'weakest_link_threshold', type: 'slider', label: 'Weakest Link Threshold', default: 0.4, min: 0, max: 1, step: 0.05, description: '' },
+        { name: 'user_query', type: 'string', label: 'User Query Context', default: '', description: '' },
+      ],
+    },
     eval_analysis: {
       type_id: 'eval_analysis', label: 'Evaluation & Analysis', category: 'evaluation', color: '#FB923C',
       description: 'Combined evaluation engine',
