@@ -11,8 +11,9 @@
     {
       "name": "pipeline-studio",
       "runtimeExecutable": "/bin/sh",
-      "runtimeArgs": ["-c", "cd pipeline-studio/frontend && PATH=/opt/homebrew/bin:$PATH npx vite --host 0.0.0.0 --port 5174"],
-      "port": 5174
+      "runtimeArgs": ["-c", "cd pipeline-studio/frontend && PATH=/opt/homebrew/bin:$PATH npx vite --host 0.0.0.0 --port $PORT"],
+      "port": 5174,
+      "autoPort": true
     }
   ]
 }

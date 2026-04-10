@@ -371,6 +371,7 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
       dynamic_inputs: false,
       inputs: [
         { name: 'text_in', type: 'text', required: true, description: 'LLM response text to evaluate' },
+        { name: 'query_in', type: 'text', required: false, description: 'Original user query/utterance' },
         { name: 'audio_in', type: 'audio', required: false, description: 'Original audio (for context)' },
       ],
       outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }, { name: 'text_out', type: 'text', required: false, description: 'Binary: 0=pass, 1=fail' }],
@@ -378,7 +379,6 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
         { name: 'judge_backend', type: 'select', label: 'Judge LLM', default: 'openai:gpt-4o', options: [{ value: 'openai:gpt-4o', label: 'GPT-4o' }, { value: 'openai:gpt-4o-mini', label: 'GPT-4o Mini' }, { value: 'gemini:gemini-2.0-flash', label: 'Gemini 2.0 Flash' }, { value: 'anthropic:claude-sonnet-4-6', label: 'Claude Sonnet' }, { value: 'ollama:mistral', label: 'Ollama Mistral' }], description: '' },
         { name: 'pass_threshold', type: 'slider', label: 'Pass Threshold', default: 0.6, min: 0, max: 1, step: 0.05, description: 'Weighted average score threshold for pass' },
         { name: 'weakest_link_threshold', type: 'slider', label: 'Weakest Link Threshold', default: 0.4, min: 0, max: 1, step: 0.05, description: 'Any sub-agent below this = automatic fail' },
-        { name: 'user_query', type: 'string', label: 'User Query Context', default: '', description: 'Original user query for context (optional)' },
       ],
     },
     compliance_eval: {
@@ -387,6 +387,7 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
       dynamic_inputs: false,
       inputs: [
         { name: 'text_in', type: 'text', required: true, description: 'LLM response text to evaluate' },
+        { name: 'query_in', type: 'text', required: false, description: 'Original user query/utterance' },
         { name: 'audio_in', type: 'audio', required: false, description: 'Original audio (for context)' },
       ],
       outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }, { name: 'text_out', type: 'text', required: false, description: 'Binary: 0=pass, 1=fail' }],
@@ -394,7 +395,6 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
         { name: 'judge_backend', type: 'select', label: 'Judge LLM', default: 'openai:gpt-4o', options: [{ value: 'openai:gpt-4o', label: 'GPT-4o' }, { value: 'openai:gpt-4o-mini', label: 'GPT-4o Mini' }, { value: 'gemini:gemini-2.0-flash', label: 'Gemini 2.0 Flash' }, { value: 'anthropic:claude-sonnet-4-6', label: 'Claude Sonnet' }, { value: 'ollama:mistral', label: 'Ollama Mistral' }], description: '' },
         { name: 'pass_threshold', type: 'slider', label: 'Pass Threshold', default: 0.6, min: 0, max: 1, step: 0.05, description: '' },
         { name: 'weakest_link_threshold', type: 'slider', label: 'Weakest Link Threshold', default: 0.4, min: 0, max: 1, step: 0.05, description: '' },
-        { name: 'user_query', type: 'string', label: 'User Query Context', default: '', description: '' },
       ],
     },
     trust_brand_eval: {
@@ -403,6 +403,7 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
       dynamic_inputs: false,
       inputs: [
         { name: 'text_in', type: 'text', required: true, description: 'LLM response text to evaluate' },
+        { name: 'query_in', type: 'text', required: false, description: 'Original user query/utterance' },
         { name: 'audio_in', type: 'audio', required: false, description: 'Original audio (for context)' },
       ],
       outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }, { name: 'text_out', type: 'text', required: false, description: 'Binary: 0=pass, 1=fail' }],
@@ -410,7 +411,6 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
         { name: 'judge_backend', type: 'select', label: 'Judge LLM', default: 'openai:gpt-4o', options: [{ value: 'openai:gpt-4o', label: 'GPT-4o' }, { value: 'openai:gpt-4o-mini', label: 'GPT-4o Mini' }, { value: 'gemini:gemini-2.0-flash', label: 'Gemini 2.0 Flash' }, { value: 'anthropic:claude-sonnet-4-6', label: 'Claude Sonnet' }, { value: 'ollama:mistral', label: 'Ollama Mistral' }], description: '' },
         { name: 'pass_threshold', type: 'slider', label: 'Pass Threshold', default: 0.6, min: 0, max: 1, step: 0.05, description: '' },
         { name: 'weakest_link_threshold', type: 'slider', label: 'Weakest Link Threshold', default: 0.4, min: 0, max: 1, step: 0.05, description: '' },
-        { name: 'user_query', type: 'string', label: 'User Query Context', default: '', description: '' },
       ],
     },
     ux_quality_eval: {
@@ -419,6 +419,7 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
       dynamic_inputs: false,
       inputs: [
         { name: 'text_in', type: 'text', required: true, description: 'LLM response text to evaluate' },
+        { name: 'query_in', type: 'text', required: false, description: 'Original user query/utterance' },
         { name: 'audio_in', type: 'audio', required: false, description: 'Original audio (for context)' },
       ],
       outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }, { name: 'text_out', type: 'text', required: false, description: 'Binary: 0=pass, 1=fail' }],
@@ -426,7 +427,26 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
         { name: 'judge_backend', type: 'select', label: 'Judge LLM', default: 'openai:gpt-4o', options: [{ value: 'openai:gpt-4o', label: 'GPT-4o' }, { value: 'openai:gpt-4o-mini', label: 'GPT-4o Mini' }, { value: 'gemini:gemini-2.0-flash', label: 'Gemini 2.0 Flash' }, { value: 'anthropic:claude-sonnet-4-6', label: 'Claude Sonnet' }, { value: 'ollama:mistral', label: 'Ollama Mistral' }], description: '' },
         { name: 'pass_threshold', type: 'slider', label: 'Pass Threshold', default: 0.6, min: 0, max: 1, step: 0.05, description: '' },
         { name: 'weakest_link_threshold', type: 'slider', label: 'Weakest Link Threshold', default: 0.4, min: 0, max: 1, step: 0.05, description: '' },
-        { name: 'user_query', type: 'string', label: 'User Query Context', default: '', description: '' },
+      ],
+    },
+    master_eval: {
+      type_id: 'master_eval', label: 'Master Eval', category: 'evaluation', color: '#FB923C',
+      description: 'All-in-one evaluation: safety, compliance, trust/brand, UX quality',
+      dynamic_inputs: false,
+      inputs: [
+        { name: 'text_in', type: 'text', required: true, description: 'LLM response text to evaluate' },
+        { name: 'query_in', type: 'text', required: false, description: 'Original user query/utterance' },
+        { name: 'audio_in', type: 'audio', required: false, description: 'Original audio (for context)' },
+      ],
+      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }, { name: 'text_out', type: 'text', required: false, description: 'Binary: 0=pass, 1=fail' }],
+      config_fields: [
+        { name: 'judge_backend', type: 'select', label: 'Judge LLM', default: 'openai:gpt-4o', options: [{ value: 'openai:gpt-4o', label: 'GPT-4o' }, { value: 'openai:gpt-4o-mini', label: 'GPT-4o Mini' }, { value: 'gemini:gemini-2.0-flash', label: 'Gemini 2.0 Flash' }, { value: 'anthropic:claude-sonnet-4-6', label: 'Claude Sonnet' }, { value: 'ollama:mistral', label: 'Ollama Mistral' }], description: '' },
+        { name: 'pass_threshold', type: 'slider', label: 'Pass Threshold', default: 0.6, min: 0, max: 1, step: 0.05, description: 'Overall weighted average threshold' },
+        { name: 'weakest_link_threshold', type: 'slider', label: 'Weakest Link Threshold', default: 0.3, min: 0, max: 1, step: 0.05, description: 'Any sub-category below this = automatic fail' },
+        { name: 'enable_safety', type: 'boolean', label: 'Safety-Critical', default: true, description: 'Vehicle safety, personal safety, child safety, emergency protocol' },
+        { name: 'enable_compliance', type: 'boolean', label: 'Compliance', default: true, description: 'Legal, privacy, regulatory' },
+        { name: 'enable_trust_brand', type: 'boolean', label: 'Trust & Brand', default: true, description: 'Misinformation, ethics/bias, brand safety' },
+        { name: 'enable_ux_quality', type: 'boolean', label: 'UX Quality', default: true, description: 'Cognitive load, emotional intelligence' },
       ],
     },
     eval_analysis: {
@@ -435,6 +455,7 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
       dynamic_inputs: false,
       inputs: [
         { name: 'text_in', type: 'text', required: true, description: 'LLM response text' },
+        { name: 'query_in', type: 'text', required: false, description: 'Original user query/utterance' },
         { name: 'audio_in', type: 'audio', required: false, description: 'LLM response audio' },
       ],
       outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }, { name: 'text_out', type: 'text', required: false, description: 'Binary: 0=pass, 1=fail' }],

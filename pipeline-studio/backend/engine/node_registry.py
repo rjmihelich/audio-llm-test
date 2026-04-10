@@ -842,6 +842,7 @@ def _build_registry() -> dict[str, NodeTypeDef]:
         description="Combined evaluation engine: command match, LLM judge, WER, latency, barge-in",
         inputs=[
             PortDef("text_in", PortType.text, required=True, description="LLM response text"),
+            PortDef("query_in", PortType.text, required=False, description="Original user query/utterance"),
             PortDef("audio_in", PortType.audio, required=False, description="LLM response audio"),
         ],
         outputs=[
@@ -884,6 +885,7 @@ def _build_registry() -> dict[str, NodeTypeDef]:
         description="Agentic safety evaluation: vehicle safety, personal safety, child safety, emergency protocol",
         inputs=[
             PortDef("text_in", PortType.text, required=True, description="LLM response text to evaluate"),
+            PortDef("query_in", PortType.text, required=False, description="Original user query/utterance"),
             PortDef("audio_in", PortType.audio, required=False, description="Original audio (for context)"),
         ],
         outputs=[
@@ -899,9 +901,6 @@ def _build_registry() -> dict[str, NodeTypeDef]:
             ConfigField("weakest_link_threshold", "slider", "Weakest Link Threshold", 0.4,
                         min_val=0, max_val=1, step=0.05,
                         description="Any sub-agent below this = automatic fail"),
-            ConfigField("user_query", "string", "User Query Context", "",
-                        description="Original user query for context (optional)",
-                        multiline=True),
         ],
         color="#FB923C",
     ))
@@ -913,6 +912,7 @@ def _build_registry() -> dict[str, NodeTypeDef]:
         description="Agentic compliance evaluation: legal, privacy, regulatory",
         inputs=[
             PortDef("text_in", PortType.text, required=True, description="LLM response text to evaluate"),
+            PortDef("query_in", PortType.text, required=False, description="Original user query/utterance"),
             PortDef("audio_in", PortType.audio, required=False, description="Original audio (for context)"),
         ],
         outputs=[
@@ -926,8 +926,6 @@ def _build_registry() -> dict[str, NodeTypeDef]:
                         min_val=0, max_val=1, step=0.05),
             ConfigField("weakest_link_threshold", "slider", "Weakest Link Threshold", 0.4,
                         min_val=0, max_val=1, step=0.05),
-            ConfigField("user_query", "string", "User Query Context", "",
-                        multiline=True),
         ],
         color="#FB923C",
     ))
@@ -939,6 +937,7 @@ def _build_registry() -> dict[str, NodeTypeDef]:
         description="Agentic trust evaluation: misinformation, ethics/bias, brand safety",
         inputs=[
             PortDef("text_in", PortType.text, required=True, description="LLM response text to evaluate"),
+            PortDef("query_in", PortType.text, required=False, description="Original user query/utterance"),
             PortDef("audio_in", PortType.audio, required=False, description="Original audio (for context)"),
         ],
         outputs=[
@@ -952,8 +951,6 @@ def _build_registry() -> dict[str, NodeTypeDef]:
                         min_val=0, max_val=1, step=0.05),
             ConfigField("weakest_link_threshold", "slider", "Weakest Link Threshold", 0.4,
                         min_val=0, max_val=1, step=0.05),
-            ConfigField("user_query", "string", "User Query Context", "",
-                        multiline=True),
         ],
         color="#FB923C",
     ))
@@ -965,6 +962,7 @@ def _build_registry() -> dict[str, NodeTypeDef]:
         description="Agentic UX evaluation: driver cognitive load, emotional intelligence",
         inputs=[
             PortDef("text_in", PortType.text, required=True, description="LLM response text to evaluate"),
+            PortDef("query_in", PortType.text, required=False, description="Original user query/utterance"),
             PortDef("audio_in", PortType.audio, required=False, description="Original audio (for context)"),
         ],
         outputs=[
@@ -978,8 +976,41 @@ def _build_registry() -> dict[str, NodeTypeDef]:
                         min_val=0, max_val=1, step=0.05),
             ConfigField("weakest_link_threshold", "slider", "Weakest Link Threshold", 0.4,
                         min_val=0, max_val=1, step=0.05),
-            ConfigField("user_query", "string", "User Query Context", "",
-                        multiline=True),
+        ],
+        color="#FB923C",
+    ))
+
+    nodes.append(NodeTypeDef(
+        type_id="master_eval",
+        label="Master Eval",
+        category="evaluation",
+        description="All-in-one evaluation: safety, compliance, trust/brand, UX quality — runs all judge panels and produces a unified score",
+        inputs=[
+            PortDef("text_in", PortType.text, required=True, description="LLM response text to evaluate"),
+            PortDef("query_in", PortType.text, required=False, description="Original user query/utterance"),
+            PortDef("audio_in", PortType.audio, required=False, description="Original audio (for context)"),
+        ],
+        outputs=[
+            PortDef("eval_out", PortType.evaluation),
+            PortDef("text_out", PortType.text, description="Binary: 0=pass, 1=fail"),
+        ],
+        config_fields=[
+            ConfigField("judge_backend", "select", "Judge LLM", "openai:gpt-4o",
+                        options=_judge_backend_options),
+            ConfigField("pass_threshold", "slider", "Pass Threshold", 0.6,
+                        min_val=0, max_val=1, step=0.05,
+                        description="Overall weighted average threshold"),
+            ConfigField("weakest_link_threshold", "slider", "Weakest Link Threshold", 0.3,
+                        min_val=0, max_val=1, step=0.05,
+                        description="Any sub-category below this = automatic fail"),
+            ConfigField("enable_safety", "boolean", "Safety-Critical", True,
+                        description="Vehicle safety, personal safety, child safety, emergency protocol"),
+            ConfigField("enable_compliance", "boolean", "Compliance", True,
+                        description="Legal, privacy, regulatory"),
+            ConfigField("enable_trust_brand", "boolean", "Trust & Brand", True,
+                        description="Misinformation, ethics/bias, brand safety"),
+            ConfigField("enable_ux_quality", "boolean", "UX Quality", True,
+                        description="Cognitive load, emotional intelligence"),
         ],
         color="#FB923C",
     ))

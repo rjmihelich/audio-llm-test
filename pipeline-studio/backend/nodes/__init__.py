@@ -47,6 +47,7 @@ _EXECUTOR_MAP: dict[str, str] = {
     "compliance_eval": "content_safety_nodes",
     "trust_brand_eval": "content_safety_nodes",
     "ux_quality_eval": "content_safety_nodes",
+    "master_eval": "content_safety_nodes",
     # outputs
     "text_output": "eval_nodes",
     "audio_output": "eval_nodes",

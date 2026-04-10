@@ -575,7 +575,7 @@ class GraphPipeline:
 
             # Capture eval node results (eval_analysis + content safety evals)
             if node.type_id in ("eval_analysis", "safety_critical_eval", "compliance_eval",
-                                "trust_brand_eval", "ux_quality_eval") and "eval_out" in node_outputs:
+                                "trust_brand_eval", "ux_quality_eval", "master_eval") and "eval_out" in node_outputs:
                 ev = node_outputs["eval_out"]
                 if isinstance(ev, dict):
                     eval_states[node_id] = {

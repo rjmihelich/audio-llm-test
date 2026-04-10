@@ -24,7 +24,15 @@ async def execute_eval_analysis(
     results = {}
     scores = []
 
+    # Prefer explicit query_in input; fall back to ctx.pipeline_input
+    query_in = inputs.get("query_in", "")
     pipeline_input = ctx.pipeline_input
+    if query_in and pipeline_input:
+        # Override the pipeline input text with the wired query_in
+        pipeline_input = type(pipeline_input)(
+            original_text=str(query_in),
+            **{k: v for k, v in pipeline_input.__dict__.items() if k != "original_text"},
+        )
 
     # Command Match evaluation
     if evaluators in ("command_match", "all"):

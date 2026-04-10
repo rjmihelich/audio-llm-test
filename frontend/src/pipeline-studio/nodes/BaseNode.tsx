@@ -23,7 +23,7 @@ export default function BaseNode({ data, selected, id }: NodeProps) {
   )
   const evalState = useGraphStore((s) => {
     const isEval = ['eval_analysis', 'safety_critical_eval', 'compliance_eval',
-      'trust_brand_eval', 'ux_quality_eval', 'eval_output'].includes(d.type_id)
+      'trust_brand_eval', 'ux_quality_eval', 'master_eval', 'eval_output'].includes(d.type_id)
     return isEval ? s.evalStates?.[id] : undefined
   })
 
@@ -85,7 +85,7 @@ export default function BaseNode({ data, selected, id }: NodeProps) {
       </div>
 
       {/* Body */}
-      <div className="px-3 py-2 text-[10px] text-gray-500 relative">
+      <div className="px-3 py-2 text-[10px] text-gray-500">
         {/* Quick config summary */}
         {d.type_id === 'noise_generator' && (
           <div className="text-gray-700 font-medium">{String(d.config?.noise_type || 'pink_lpf')}</div>
@@ -158,62 +158,55 @@ export default function BaseNode({ data, selected, id }: NodeProps) {
           </div>
         )}
 
-        {/* Input handles */}
-        {allInputs.map((port, i) => (
-          <Handle
-            key={port.name}
-            type="target"
-            position={Position.Left}
-            id={port.name}
-            className={`handle-${port.type}`}
-            style={{
-              top: `${28 + (i + 1) * 20}px`,
-              background: PORT_COLORS[port.type as PortType],
-              width: 10,
-              height: 10,
-              border: '2px solid white',
-            }}
-            title={`${port.name} (${port.type})`}
-          />
-        ))}
-
-        {/* Output handles */}
-        {visibleOutputs.map((port, i) => {
-          // Highlight active router output in green
-          const isActiveRouterPort = d.type_id === 'router' && routerActiveRoute !== undefined
-            && port.name.endsWith(`_${routerActiveRoute}`)
-          return (
-            <Handle
-              key={port.name}
-              type="source"
-              position={Position.Right}
-              id={port.name}
-              className={`handle-${port.type}`}
-              style={{
-                top: `${28 + (i + 1) * 20}px`,
-                background: isActiveRouterPort ? '#22C55E' : PORT_COLORS[port.type as PortType],
-                width: isActiveRouterPort ? 12 : 10,
-                height: isActiveRouterPort ? 12 : 10,
-                border: isActiveRouterPort ? '2px solid #16A34A' : '2px solid white',
-                boxShadow: isActiveRouterPort ? '0 0 6px rgba(34,197,94,0.5)' : 'none',
-                transition: 'all 0.2s',
-              }}
-              title={`${port.name} (${port.type})${isActiveRouterPort ? ' — ACTIVE' : ''}`}
-            />
-          )
-        })}
-
-        {/* Port labels */}
+        {/* Port labels with co-located handles — handles stay aligned regardless of config content */}
         <div className="flex justify-between mt-1 gap-4">
-          <div className="space-y-0.5">
-            {allInputs.map((p) => (
-              <div key={p.name} className="text-[9px] text-gray-400">{p.name}</div>
+          <div>
+            {allInputs.map((port) => (
+              <div key={port.name} className="relative flex items-center" style={{ height: 20 }}>
+                <Handle
+                  type="target"
+                  position={Position.Left}
+                  id={port.name}
+                  className={`handle-${port.type}`}
+                  style={{
+                    left: -15,
+                    background: PORT_COLORS[port.type as PortType],
+                    width: 10,
+                    height: 10,
+                    border: '2px solid white',
+                  }}
+                  title={`${port.name} (${port.type})`}
+                />
+                <span className="text-[9px] text-gray-400">{port.name}</span>
+              </div>
             ))}
           </div>
-          <div className="space-y-0.5 text-right">
-            {visibleOutputs.map((p) => (
-              <div key={p.name} className="text-[9px] text-gray-400">{p.name}</div>
-            ))}
+          <div>
+            {visibleOutputs.map((port) => {
+              const isActiveRouterPort = d.type_id === 'router' && routerActiveRoute !== undefined
+                && port.name.endsWith(`_${routerActiveRoute}`)
+              return (
+                <div key={port.name} className="relative flex items-center justify-end" style={{ height: 20 }}>
+                  <Handle
+                    type="source"
+                    position={Position.Right}
+                    id={port.name}
+                    className={`handle-${port.type}`}
+                    style={{
+                      right: -15,
+                      background: isActiveRouterPort ? '#22C55E' : PORT_COLORS[port.type as PortType],
+                      width: isActiveRouterPort ? 12 : 10,
+                      height: isActiveRouterPort ? 12 : 10,
+                      border: isActiveRouterPort ? '2px solid #16A34A' : '2px solid white',
+                      boxShadow: isActiveRouterPort ? '0 0 6px rgba(34,197,94,0.5)' : 'none',
+                      transition: 'all 0.2s',
+                    }}
+                    title={`${port.name} (${port.type})${isActiveRouterPort ? ' — ACTIVE' : ''}`}
+                  />
+                  <span className="text-[9px] text-gray-400">{port.name}</span>
+                </div>
+              )
+            })}
           </div>
         </div>
       </div>
