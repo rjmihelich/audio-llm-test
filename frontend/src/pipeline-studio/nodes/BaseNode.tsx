@@ -145,6 +145,9 @@ export default function BaseNode({ data, selected, id }: NodeProps) {
         {d.type_id === 'tts' && (
           <div className="text-gray-700 font-medium">{String(d.config?.provider || 'edge')}</div>
         )}
+        {d.type_id === 'triage_classifier' && (
+          <div className="text-gray-700 font-medium">0=vehicle 1=general</div>
+        )}
         {d.type_id === 'text_source' && (
           <div className="text-gray-700 font-medium truncate max-w-[130px]">
             {d.config?.source_mode === 'custom'
