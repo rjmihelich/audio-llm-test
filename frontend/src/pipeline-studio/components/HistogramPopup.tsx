@@ -1,6 +1,6 @@
 /** Floating histogram popup — persists even when selecting other nodes */
 
-import { useRef, useCallback, useState, useEffect } from 'react'
+import { useRef, useCallback, useState } from 'react'
 import { useGraphStore } from '../hooks/useGraphStore'
 
 interface HistogramPopupProps {
@@ -10,17 +10,17 @@ interface HistogramPopupProps {
 const EMPTY_DATA: string[] = []
 
 /** Aggregate raw data into { label, count, color } buckets */
-function computeHistogramBuckets(data: string[], mode: string) {
+function computeHistogramBuckets(data: string[], mode: string, label0?: string, label1?: string) {
   if (mode === 'binary') {
-    let pass = 0
-    let fail = 0
+    let count0 = 0
+    let count1 = 0
     for (const v of data) {
-      if (v.trim() === '0') pass++
-      else fail++
+      if (v.trim() === '0') count0++
+      else count1++
     }
     return [
-      { label: 'Pass', count: pass, color: '#22C55E' },
-      { label: 'Fail', count: fail, color: '#EF4444' },
+      { label: label0 || 'Pass', count: count0, color: '#22C55E' },
+      { label: label1 || 'Fail', count: count1, color: '#EF4444' },
     ]
   }
   const counts: Record<string, number> = {}
@@ -48,6 +48,10 @@ export default function HistogramPopup({ nodeId }: HistogramPopupProps) {
     ? ((node.data as Record<string, unknown>).config as Record<string, unknown>) || {}
     : {}
   const mode = String(config.mode || 'binary')
+  const label0 = String(config.bin_label_0 || 'Pass')
+  const label1 = String(config.bin_label_1 || 'Fail')
+  const updateNodeConfig = useGraphStore((s) => s.updateNodeConfig)
+  const [editingBin, setEditingBin] = useState<string | null>(null)
 
   // Draggable state — persisted in store so positions survive save/load
   const savedPos = useGraphStore((s) => s.histogramPositions?.[nodeId])
@@ -101,7 +105,7 @@ export default function HistogramPopup({ nodeId }: HistogramPopupProps) {
 
   // Aggregate into proper buckets
   const total = data.length
-  const buckets = computeHistogramBuckets(data, mode)
+  const buckets = computeHistogramBuckets(data, mode, label0, label1)
   const maxCount = Math.max(1, ...buckets.map((b) => b.count))
 
   return (
@@ -174,7 +178,30 @@ export default function HistogramPopup({ nodeId }: HistogramPopupProps) {
                         }}
                       />
                     </div>
-                    <span className="text-[9px] font-semibold mt-1" style={{ color: b.color }}>{b.label}</span>
+                    {mode === 'binary' && editingBin === b.label ? (
+                      <input
+                        autoFocus
+                        className="text-[9px] font-semibold mt-1 w-full text-center border-b border-gray-300 outline-none bg-transparent"
+                        style={{ color: b.color }}
+                        defaultValue={b.label}
+                        onBlur={(e) => {
+                          const val = e.target.value.trim() || b.label
+                          const key = b === buckets[0] ? 'bin_label_0' : 'bin_label_1'
+                          updateNodeConfig(nodeId, { [key]: val })
+                          setEditingBin(null)
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                        }}
+                      />
+                    ) : (
+                      <span
+                        className="text-[9px] font-semibold mt-1 cursor-pointer hover:underline"
+                        style={{ color: b.color }}
+                        onClick={() => mode === 'binary' && setEditingBin(b.label)}
+                        title="Click to rename"
+                      >{b.label}</span>
+                    )}
                     <span className="text-[8px] text-gray-400">{pct}%</span>
                   </div>
                 )
