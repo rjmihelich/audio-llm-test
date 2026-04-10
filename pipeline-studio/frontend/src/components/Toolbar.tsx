@@ -169,33 +169,41 @@ export default function Toolbar({ registry }: ToolbarProps) {
       if (result.audio_wav_base64) {
         setTransport('playing')
         return new Promise<boolean>((resolve) => {
-          // Use blob URL instead of data URL for better browser compatibility
-          const byteChars = atob(result.audio_wav_base64)
-          const byteArray = new Uint8Array(byteChars.length)
-          for (let i = 0; i < byteChars.length; i++) {
-            byteArray[i] = byteChars.charCodeAt(i)
-          }
-          const blob = new Blob([byteArray], { type: 'audio/wav' })
-          const url = URL.createObjectURL(blob)
-          const audio = new Audio(url)
-          currentAudioRef.current = audio
-          audio.onended = () => {
-            currentAudioRef.current = null
-            URL.revokeObjectURL(url)
+          try {
+            // Use blob URL instead of data URL for better browser compatibility
+            const byteChars = atob(result.audio_wav_base64)
+            const byteArray = new Uint8Array(byteChars.length)
+            for (let i = 0; i < byteChars.length; i++) {
+              byteArray[i] = byteChars.charCodeAt(i)
+            }
+            const blob = new Blob([byteArray], { type: 'audio/wav' })
+            const url = URL.createObjectURL(blob)
+            const audio = new Audio(url)
+            audio.volume = 1.0
+            currentAudioRef.current = audio
+            audio.onended = () => {
+              currentAudioRef.current = null
+              URL.revokeObjectURL(url)
+              resolve(!stopRequestedRef.current)
+            }
+            audio.onerror = () => {
+              setLastError('Audio decode error')
+              currentAudioRef.current = null
+              URL.revokeObjectURL(url)
+              resolve(!stopRequestedRef.current)
+            }
+            audio.play().then(() => {
+              // Audio is actually playing
+            }).catch((err) => {
+              setLastError(`Play blocked: ${err.message}`)
+              currentAudioRef.current = null
+              URL.revokeObjectURL(url)
+              resolve(!stopRequestedRef.current)
+            })
+          } catch (err) {
+            setLastError(`Audio error: ${err instanceof Error ? err.message : err}`)
             resolve(!stopRequestedRef.current)
           }
-          audio.onerror = (e) => {
-            console.error('Audio playback error:', e)
-            currentAudioRef.current = null
-            URL.revokeObjectURL(url)
-            resolve(!stopRequestedRef.current)
-          }
-          audio.play().catch((err) => {
-            console.error('Audio play() rejected:', err)
-            currentAudioRef.current = null
-            URL.revokeObjectURL(url)
-            resolve(!stopRequestedRef.current)
-          })
         })
       }
 

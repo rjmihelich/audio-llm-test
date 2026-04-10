@@ -67,7 +67,11 @@ export interface ValidationResult {
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.text()
-    throw new Error(`${res.status}: ${body}`)
+    // Don't show raw HTML error pages (e.g. Cloudflare 524 timeout)
+    const msg = body.startsWith('<!') || body.startsWith('<html')
+      ? `HTTP ${res.status} — proxy timeout (pipeline took too long)`
+      : body
+    throw new Error(`${res.status}: ${msg}`)
   }
   return res.json()
 }
