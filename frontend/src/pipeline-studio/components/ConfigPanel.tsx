@@ -304,7 +304,7 @@ function ModelStatusIndicator({ nodeId }: { nodeId: string }) {
 }
 
 function OutputLog({ nodeId }: { nodeId: string }) {
-  const outputLog = useGraphStore((s) => s.outputLogs[nodeId] || [])
+  const outputLog = useGraphStore((s) => (s.outputLogs || {})[nodeId] || [])
   const clearOutputLog = useGraphStore((s) => s.clearOutputLog)
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -350,7 +350,7 @@ function OutputLog({ nodeId }: { nodeId: string }) {
 }
 
 function HistogramDisplay({ nodeId, config }: { nodeId: string; config: Record<string, unknown> }) {
-  const data = useGraphStore((s) => s.histogramData[nodeId] || [])
+  const data = useGraphStore((s) => (s.histogramData || {})[nodeId] || [])
   const clearData = useGraphStore((s) => s.clearHistogramData)
   const mode = String(config.mode || 'binary')
 
