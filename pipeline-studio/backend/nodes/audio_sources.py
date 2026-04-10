@@ -38,30 +38,29 @@ async def execute_noise_generator(
     """Generate noise audio."""
     noise_type = config.get("noise_type", "pink_lpf")
     seed = config.get("seed")
+    if seed is not None:
+        seed = int(seed)
     sample_rate = 16000
 
     # Match duration to speech source if available
     duration_s = config.get("duration_s", 0)
-    if duration_s <= 0:
+    if not duration_s or float(duration_s) <= 0:
         duration_s = len(ctx.pipeline_input.clean_speech.samples) / ctx.pipeline_input.clean_speech.sample_rate
-
-    num_samples = int(duration_s * sample_rate)
-
-    rng = np.random.default_rng(seed)
+    duration_s = float(duration_s)
 
     if noise_type == "white":
-        audio = white_noise(num_samples, rng=rng)
+        audio = white_noise(duration_s, sample_rate=sample_rate, seed=seed)
     elif noise_type == "pink":
-        audio = pink_noise(num_samples, rng=rng)
+        audio = pink_noise(duration_s, sample_rate=sample_rate, seed=seed)
     elif noise_type == "pink_lpf":
-        audio = pink_noise_filtered(num_samples, rng=rng)
+        audio = pink_noise_filtered(duration_s, sample_rate=sample_rate, seed=seed)
     elif noise_type == "babble":
-        audio = babble_noise(num_samples, rng=rng)
+        audio = babble_noise(duration_s, sample_rate=sample_rate, seed=seed)
     elif noise_type in ("traffic", "wind"):
         # Use filtered pink noise as approximation
-        audio = pink_noise_filtered(num_samples, rng=rng)
+        audio = pink_noise_filtered(duration_s, sample_rate=sample_rate, seed=seed)
     else:
-        audio = pink_noise_filtered(num_samples, rng=rng)
+        audio = pink_noise_filtered(duration_s, sample_rate=sample_rate, seed=seed)
 
     return {"audio_out": audio}
 

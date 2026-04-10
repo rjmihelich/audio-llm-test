@@ -117,13 +117,13 @@ else
     fi
 
     # Backend code changed? (volume mounted, just restart)
-    if echo "$CHANGED_FILES" | grep -qE '^backend/'; then
+    if echo "$CHANGED_FILES" | grep -qE '^(backend/|pipeline-studio/backend/)'; then
         RESTART_BACKEND=true
         RESTART_WORKER=true
     fi
 
     # Frontend code changed? (volume mounted, vite hot-reloads but restart to be safe)
-    if echo "$CHANGED_FILES" | grep -qE '^frontend/'; then
+    if echo "$CHANGED_FILES" | grep -qE '^(frontend/|pipeline-studio/frontend/)'; then
         RESTART_FRONTEND=true
     fi
 
@@ -185,21 +185,22 @@ fi
 echo -e "\n${BOLD}═══ Verifying deployment ═══${NC}"
 
 HEALTH_OK=true
-for SERVICE_URL in "http://localhost:8000/api/ping Backend" "http://localhost:5173 Frontend"; do
-    URL="${SERVICE_URL% *}"
-    NAME="${SERVICE_URL##* }"
+# Ports aren't exposed to host (nginx routes via docker network).
+# Use Docker's built-in healthcheck status instead.
+for SVC in backend frontend; do
     VERIFIED=false
     for i in $(seq 1 10); do
-        if curl -sf --max-time 5 "$URL" > /dev/null 2>&1; then
-            ok "$NAME responding (attempt $i/10)"
+        STATUS=$(docker compose ps --format '{{.Health}}' "$SVC" 2>/dev/null || echo "unknown")
+        if [[ "$STATUS" == "healthy" ]]; then
+            ok "$SVC healthy (attempt $i/10)"
             VERIFIED=true
             break
         fi
-        echo -e "    Attempt $i/10: $NAME not ready..."
+        echo -e "    Attempt $i/10: $SVC status=$STATUS..."
         sleep 3
     done
     if [[ "$VERIFIED" == "false" ]]; then
-        err "$NAME FAILED health check after 10 attempts"
+        err "$SVC FAILED health check after 10 attempts"
         HEALTH_OK=false
     fi
 done
