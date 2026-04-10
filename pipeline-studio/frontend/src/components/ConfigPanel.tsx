@@ -351,39 +351,41 @@ function OutputLog({ nodeId }: { nodeId: string }) {
   )
 }
 
+/** Aggregate raw data into { label, count, color } buckets */
+function computeBuckets(data: string[], mode: string) {
+  if (mode === 'binary') {
+    // Exactly 2 buckets: "0" = Pass, everything else = Fail
+    let pass = 0
+    let fail = 0
+    for (const v of data) {
+      if (v.trim() === '0') pass++
+      else fail++
+    }
+    return [
+      { label: 'Pass (0)', count: pass, color: '#22C55E' },
+      { label: 'Fail (1)', count: fail, color: '#EF4444' },
+    ]
+  }
+
+  // Categorical / numeric: one bucket per unique value
+  const counts: Record<string, number> = {}
+  for (const v of data) {
+    const key = v.trim() || '(empty)'
+    counts[key] = (counts[key] || 0) + 1
+  }
+  const colors = ['#3B82F6', '#22C55E', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316']
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([key, count], i) => ({ label: key, count, color: colors[i % colors.length] }))
+}
+
 function HistogramDisplay({ nodeId, config }: { nodeId: string; config: Record<string, unknown> }) {
   const data = useGraphStore((s) => s.histogramData?.[nodeId] ?? EMPTY_LOG)
   const clearData = useGraphStore((s) => s.clearHistogramData)
   const mode = String(config.mode || 'binary')
-
-  // Compute bucket counts
-  const counts: Record<string, number> = {}
-  for (const v of data) {
-    const key = v || '(empty)'
-    counts[key] = (counts[key] || 0) + 1
-  }
-
-  // For binary mode, ensure both 0 and 1 are shown
-  if (mode === 'binary') {
-    if (!counts['0']) counts['0'] = 0
-    if (!counts['1']) counts['1'] = 0
-  }
-
-  const sortedKeys = Object.keys(counts).sort()
-  const maxCount = Math.max(1, ...Object.values(counts))
   const total = data.length
-
-  const barColor = (key: string) => {
-    if (mode === 'binary') return key === '0' ? '#22C55E' : '#EF4444'
-    const colors = ['#3B82F6', '#22C55E', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316']
-    const idx = sortedKeys.indexOf(key) % colors.length
-    return colors[idx]
-  }
-
-  const barLabel = (key: string) => {
-    if (mode === 'binary') return key === '0' ? 'Pass' : 'Fail'
-    return key
-  }
+  const buckets = computeBuckets(data, mode)
+  const maxCount = Math.max(1, ...buckets.map((b) => b.count))
 
   return (
     <div className="pt-2 border-t border-gray-100">
@@ -400,29 +402,37 @@ function HistogramDisplay({ nodeId, config }: { nodeId: string; config: Record<s
           <span className="text-gray-300 italic text-[10px]">Press Play to collect data...</span>
         </div>
       ) : (
-        <div className="bg-gray-50 border border-gray-200 rounded p-2 space-y-1.5">
-          {sortedKeys.map((key) => {
-            const count = counts[key]
-            const pct = total > 0 ? (count / total) * 100 : 0
-            return (
-              <div key={key}>
-                <div className="flex items-center justify-between text-[10px] mb-0.5">
-                  <span className="font-medium text-gray-600">{barLabel(key)}</span>
-                  <span className="text-gray-400">{count} ({pct.toFixed(0)}%)</span>
+        <div className="bg-gray-50 border border-gray-200 rounded p-2">
+          {/* Bars side by side */}
+          <div className="flex items-end gap-2 justify-center" style={{ height: 80 }}>
+            {buckets.map((b) => {
+              const heightPct = maxCount > 0 ? (b.count / maxCount) * 100 : 0
+              return (
+                <div key={b.label} className="flex flex-col items-center flex-1">
+                  <span className="text-[9px] text-gray-500 font-mono mb-0.5">{b.count}</span>
+                  <div className="w-full flex items-end" style={{ height: 56 }}>
+                    <div
+                      className="w-full rounded-t transition-all duration-300"
+                      style={{
+                        height: `${Math.max(heightPct, 2)}%`,
+                        backgroundColor: b.color,
+                      }}
+                    />
+                  </div>
+                  <span className="text-[8px] font-medium text-gray-600 mt-0.5 text-center leading-tight">{b.label}</span>
                 </div>
-                <div className="h-4 bg-gray-200 rounded overflow-hidden">
-                  <div
-                    className="h-full rounded transition-all duration-300"
-                    style={{
-                      width: `${(count / maxCount) * 100}%`,
-                      backgroundColor: barColor(key),
-                    }}
-                  />
-                </div>
-              </div>
-            )
-          })}
-          <p className="text-[9px] text-gray-300 mt-1">{total} samples</p>
+              )
+            })}
+          </div>
+          {/* Percentages */}
+          <div className="flex gap-2 justify-center mt-1">
+            {buckets.map((b) => (
+              <span key={b.label} className="text-[9px] text-gray-400 flex-1 text-center">
+                {total > 0 ? ((b.count / total) * 100).toFixed(0) : 0}%
+              </span>
+            ))}
+          </div>
+          <p className="text-[9px] text-gray-300 mt-1.5 text-center">{total} samples</p>
         </div>
       )}
     </div>

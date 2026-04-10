@@ -9,6 +9,31 @@ interface HistogramPopupProps {
 
 const EMPTY_DATA: string[] = []
 
+/** Aggregate raw data into { label, count, color } buckets */
+function computeHistogramBuckets(data: string[], mode: string) {
+  if (mode === 'binary') {
+    let pass = 0
+    let fail = 0
+    for (const v of data) {
+      if (v.trim() === '0') pass++
+      else fail++
+    }
+    return [
+      { label: 'Pass', count: pass, color: '#22C55E' },
+      { label: 'Fail', count: fail, color: '#EF4444' },
+    ]
+  }
+  const counts: Record<string, number> = {}
+  for (const v of data) {
+    const key = v.trim() || '(empty)'
+    counts[key] = (counts[key] || 0) + 1
+  }
+  const colors = ['#3B82F6', '#22C55E', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316']
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .map(([key, count], i) => ({ label: key, count, color: colors[i % colors.length] }))
+}
+
 export default function HistogramPopup({ nodeId }: HistogramPopupProps) {
   const data = useGraphStore((s) => s.histogramData?.[nodeId] ?? EMPTY_DATA)
   const clearData = useGraphStore((s) => s.clearHistogramData)
@@ -66,33 +91,10 @@ export default function HistogramPopup({ nodeId }: HistogramPopupProps) {
     window.addEventListener('mouseup', handleMouseUp)
   }, [pos])
 
-  // Compute bucket counts
-  const counts: Record<string, number> = {}
-  for (const v of data) {
-    const key = v || '(empty)'
-    counts[key] = (counts[key] || 0) + 1
-  }
-
-  if (mode === 'binary') {
-    if (!counts['0']) counts['0'] = 0
-    if (!counts['1']) counts['1'] = 0
-  }
-
-  const sortedKeys = Object.keys(counts).sort()
-  const maxCount = Math.max(1, ...Object.values(counts))
+  // Aggregate into proper buckets
   const total = data.length
-
-  const barColor = (key: string) => {
-    if (mode === 'binary') return key === '0' ? '#22C55E' : '#EF4444'
-    const colors = ['#3B82F6', '#22C55E', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316']
-    const idx = sortedKeys.indexOf(key) % colors.length
-    return colors[idx]
-  }
-
-  const barLabel = (key: string) => {
-    if (mode === 'binary') return key === '0' ? 'Pass' : 'Fail'
-    return key
-  }
+  const buckets = computeHistogramBuckets(data, mode)
+  const maxCount = Math.max(1, ...buckets.map((b) => b.count))
 
   return (
     <div
@@ -101,8 +103,8 @@ export default function HistogramPopup({ nodeId }: HistogramPopupProps) {
       style={{
         left: pos.x,
         top: pos.y,
-        width: 280,
-        minHeight: 120,
+        width: 300,
+        minHeight: 140,
       }}
     >
       {/* Draggable title bar */}
@@ -115,6 +117,7 @@ export default function HistogramPopup({ nodeId }: HistogramPopupProps) {
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
           </svg>
           <span className="text-xs font-bold text-gray-700">{nodeLabel}</span>
+          {total > 0 && <span className="text-[9px] text-gray-400">({total})</span>}
         </div>
         <div className="flex items-center gap-1.5">
           {total > 0 && (
@@ -138,37 +141,39 @@ export default function HistogramPopup({ nodeId }: HistogramPopupProps) {
         </div>
       </div>
 
-      {/* Histogram content */}
-      <div className="p-3">
+      {/* Histogram bars */}
+      <div className="p-4">
         {total === 0 ? (
-          <div className="flex items-center justify-center min-h-[60px]">
+          <div className="flex items-center justify-center min-h-[80px]">
             <span className="text-gray-300 italic text-[10px]">Press Play to collect data...</span>
           </div>
         ) : (
-          <div className="space-y-2">
-            {sortedKeys.map((key) => {
-              const count = counts[key]
-              const pct = total > 0 ? (count / total) * 100 : 0
-              return (
-                <div key={key}>
-                  <div className="flex items-center justify-between text-[10px] mb-0.5">
-                    <span className="font-medium text-gray-600">{barLabel(key)}</span>
-                    <span className="text-gray-400">{count} ({pct.toFixed(0)}%)</span>
+          <>
+            {/* Vertical bar chart */}
+            <div className="flex items-end gap-3 justify-center" style={{ height: 100 }}>
+              {buckets.map((b) => {
+                const heightPct = maxCount > 0 ? (b.count / maxCount) * 100 : 0
+                const pct = total > 0 ? ((b.count / total) * 100).toFixed(0) : '0'
+                return (
+                  <div key={b.label} className="flex flex-col items-center" style={{ flex: 1, maxWidth: 80 }}>
+                    <span className="text-[10px] font-bold text-gray-700 mb-1">{b.count}</span>
+                    <div className="w-full flex items-end" style={{ height: 64 }}>
+                      <div
+                        className="w-full rounded-t transition-all duration-500"
+                        style={{
+                          height: `${Math.max(heightPct, 3)}%`,
+                          backgroundColor: b.color,
+                        }}
+                      />
+                    </div>
+                    <span className="text-[9px] font-semibold mt-1" style={{ color: b.color }}>{b.label}</span>
+                    <span className="text-[8px] text-gray-400">{pct}%</span>
                   </div>
-                  <div className="h-5 bg-gray-100 rounded overflow-hidden">
-                    <div
-                      className="h-full rounded transition-all duration-300"
-                      style={{
-                        width: `${(count / maxCount) * 100}%`,
-                        backgroundColor: barColor(key),
-                      }}
-                    />
-                  </div>
-                </div>
-              )
-            })}
-            <p className="text-[9px] text-gray-300 mt-1">{total} samples</p>
-          </div>
+                )
+              })}
+            </div>
+            <p className="text-[9px] text-gray-300 mt-2 text-center">{total} samples</p>
+          </>
         )}
       </div>
     </div>
