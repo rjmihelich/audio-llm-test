@@ -43,6 +43,7 @@ class OllamaBackend:
     ):
         self._base_url = base_url.rstrip("/")
         self._model = model
+        self._model_resolved = False
         self._request_timeout = request_timeout
         self._max_concurrent_override = max_concurrent
         self._probed = False
@@ -122,12 +123,47 @@ class OllamaBackend:
             "Ollama does not support direct audio input. Use Pipeline B (ASR → text → LLM)."
         )
 
+    async def _resolve_model(self) -> None:
+        """Resolve model name to an available tag if bare name doesn't exist.
+
+        Ollama requires the full tag (e.g. llama3.1:8b). If the user specifies
+        just 'llama3.1', look up available models and find the best match.
+        """
+        if self._model_resolved:
+            return
+        self._model_resolved = True
+
+        # If model already has a tag, use as-is
+        if ":" in self._model:
+            return
+
+        try:
+            resp = await self._client.get("/api/tags", timeout=10)
+            if resp.status_code != 200:
+                return
+            models = resp.json().get("models", [])
+            names = [m["name"] for m in models]
+
+            # Exact match (some models work without tag)
+            if self._model in names:
+                return
+
+            # Find models that start with our base name
+            candidates = [n for n in names if n.startswith(f"{self._model}:")]
+            if candidates:
+                # Prefer smallest variant for speed (:latest, :8b, :7b over :70b)
+                self._model = candidates[0]
+                logger.info("Resolved model '%s' → '%s'", self._model.split(":")[0], self._model)
+        except Exception as e:
+            logger.debug("Model resolution failed: %s", e)
+
     async def query_with_text(
         self,
         text: str,
         system_prompt: str,
         context: str | None = None,
     ) -> LLMResponse:
+        await self._resolve_model()
         prompt = f"{context}\n\n{text}" if context else text
         payload = {
             "model": self._model,
