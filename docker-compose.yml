@@ -119,6 +119,21 @@ services:
       - default
       - web
 
+  pipeline-studio:
+    build:
+      context: ./pipeline-studio/frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5174:5174"
+    volumes:
+      - ./pipeline-studio/frontend/src:/app/src
+      - ./pipeline-studio/frontend/vite.config.ts:/app/vite.config.ts
+    depends_on:
+      - backend
+    networks:
+      - default
+      - web
+
 volumes:
   pgdata:
 
