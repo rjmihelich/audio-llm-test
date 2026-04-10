@@ -153,13 +153,14 @@ if [[ "$REBUILD_FRONTEND" == "true" ]]; then
     ok "Frontend image rebuilt"
 fi
 
-# ---- 4. Restart / recreate containers ----
+# ---- 4. Restart / recreate containers (zero-downtime) ----
 echo -e "\n${BOLD}═══ Restarting services ═══${NC}"
 
 if [[ "$REBUILD_BACKEND" == "true" || "$REBUILD_FRONTEND" == "true" ]]; then
-    # Recreate to pick up new images
-    docker compose up -d --force-recreate
-    ok "All containers recreated"
+    # Up without --force-recreate or down: Docker detects image changes and
+    # recreates only changed containers. --wait blocks until healthchecks pass.
+    docker compose up -d --wait --wait-timeout 120
+    ok "Containers updated (waited for healthy)"
 else
     SERVICES_TO_RESTART=""
     [[ "$RESTART_BACKEND" == "true" ]]  && SERVICES_TO_RESTART="$SERVICES_TO_RESTART backend"
@@ -180,21 +181,31 @@ if [[ "$RUN_MIGRATIONS" == "true" ]]; then
     docker compose exec -T backend alembic upgrade head 2>/dev/null && ok "Migrations applied" || warn "No alembic config or already up to date"
 fi
 
-# ---- 6. Health check ----
-echo -e "\n${BOLD}═══ Checking health ═══${NC}"
-sleep 3
+# ---- 6. Health check with retries ----
+echo -e "\n${BOLD}═══ Verifying deployment ═══${NC}"
 
-# Quick health ping
-if curl -sf http://localhost:8000/api/ping > /dev/null 2>&1; then
-    ok "Backend API responding"
-else
-    warn "Backend not responding yet (may still be starting)"
-fi
+HEALTH_OK=true
+for SERVICE_URL in "http://localhost:8000/api/ping Backend" "http://localhost:5173 Frontend"; do
+    URL="${SERVICE_URL% *}"
+    NAME="${SERVICE_URL##* }"
+    VERIFIED=false
+    for i in $(seq 1 10); do
+        if curl -sf --max-time 5 "$URL" > /dev/null 2>&1; then
+            ok "$NAME responding (attempt $i/10)"
+            VERIFIED=true
+            break
+        fi
+        echo -e "    Attempt $i/10: $NAME not ready..."
+        sleep 3
+    done
+    if [[ "$VERIFIED" == "false" ]]; then
+        err "$NAME FAILED health check after 10 attempts"
+        HEALTH_OK=false
+    fi
+done
 
-if curl -sf http://localhost:5173 > /dev/null 2>&1; then
-    ok "Frontend responding"
-else
-    warn "Frontend not responding yet (may still be starting)"
+if [[ "$HEALTH_OK" == "false" ]]; then
+    err "Deploy health verification failed!"
 fi
 
 # ---- 7. Summary ----

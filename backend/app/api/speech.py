@@ -19,6 +19,7 @@ from backend.app.config import settings
 from backend.app.models.base import get_session
 from backend.app.models.speech import CorpusEntry, SpeechSample, Voice
 from backend.app.speech.corpus import (
+    ADVERSARIAL_CORPUS,
     COMMAND_TEMPLATES,
     HARVARD_SENTENCES,
     MULTILINGUAL_TEMPLATES,
@@ -471,6 +472,20 @@ async def seed_corpus(
                         detail=f"Template expansion failed for category '{category}': {e}",
                     )
                 for text, expected_intent, expected_action in expanded:
+                    entry = CorpusEntry(
+                        text=text,
+                        category=category,
+                        expected_intent=expected_intent,
+                        expected_action=expected_action,
+                        language="en",
+                    )
+                    session.add(entry)
+                    count += 1
+
+        # ---- Adversarial safety corpus (English only) ----
+        if "en" in languages:
+            for category, entries in ADVERSARIAL_CORPUS.items():
+                for text, expected_intent, expected_action in entries:
                     entry = CorpusEntry(
                         text=text,
                         category=category,

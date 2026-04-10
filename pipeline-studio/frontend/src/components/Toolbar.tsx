@@ -1,4 +1,4 @@
-/** Top toolbar — pipeline name, save, validate, run, templates, export/import, stats */
+/** Top toolbar — File menu, actions, templates, stats */
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useReactFlow } from '@xyflow/react'
@@ -6,12 +6,13 @@ import { useGraphStore } from '../hooks/useGraphStore'
 import {
   useCreatePipeline,
   useUpdatePipeline,
+  useDeletePipeline,
   usePipelines,
   useValidateGraph,
   useExecutePreview,
 } from '../hooks/usePipelineApi'
 import type { PipelineData, NodeTypeRegistry } from '../api/client'
-import { STATIC_TEMPLATES } from '../utils/templates'
+import { STATIC_TEMPLATES, type Template } from '../utils/templates'
 import { validateGraph as validateGraphLocal } from '../utils/validation'
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts'
 
@@ -22,13 +23,16 @@ interface ToolbarProps {
 export default function Toolbar({ registry }: ToolbarProps) {
   const {
     pipelineId, pipelineName, nodes, edges, isDirty,
-    setPipeline, setDirty, canUndo, canRedo, undo, redo,
+    setPipeline, setDirty, canUndo, canRedo, undo, redo, clear,
   } = useGraphStore()
 
   const [name, setName] = useState(pipelineName)
+  const [showFileMenu, setShowFileMenu] = useState(false)
+  const [showOpenDialog, setShowOpenDialog] = useState(false)
   const [showTemplates, setShowTemplates] = useState(false)
   const [validationMsg, setValidationMsg] = useState<string | null>(null)
   const [previewResult, setPreviewResult] = useState<any | null>(null)
+  const fileMenuRef = useRef<HTMLDivElement>(null)
   const templateRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -36,25 +40,30 @@ export default function Toolbar({ registry }: ToolbarProps) {
 
   const createMutation = useCreatePipeline()
   const updateMutation = useUpdatePipeline()
+  const deleteMutation = useDeletePipeline()
   const validateMutation = useValidateGraph()
   const previewMutation = useExecutePreview()
+  const { data: savedPipelines, refetch: refetchPipelines } = usePipelines(false)
   const { data: backendTemplates } = usePipelines(true)
   const templates = backendTemplates && backendTemplates.length > 0 ? backendTemplates : STATIC_TEMPLATES
 
   // Sync name when pipeline changes
   useEffect(() => { setName(pipelineName) }, [pipelineName])
 
-  // Close template dropdown on outside click
+  // Close dropdowns on outside click
   useEffect(() => {
-    if (!showTemplates) return
+    if (!showFileMenu && !showTemplates) return
     const handler = (e: MouseEvent) => {
-      if (templateRef.current && !templateRef.current.contains(e.target as Node)) {
+      if (showFileMenu && fileMenuRef.current && !fileMenuRef.current.contains(e.target as Node)) {
+        setShowFileMenu(false)
+      }
+      if (showTemplates && templateRef.current && !templateRef.current.contains(e.target as Node)) {
         setShowTemplates(false)
       }
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
-  }, [showTemplates])
+  }, [showFileMenu, showTemplates])
 
   // Auto-clear validation messages
   useEffect(() => {
@@ -64,7 +73,7 @@ export default function Toolbar({ registry }: ToolbarProps) {
   }, [validationMsg])
 
   // Serialize graph for API
-  const buildGraphJson = () => ({
+  const buildGraphJson = useCallback(() => ({
     nodes: nodes.map((n) => {
       const { nodeDef, ...rest } = n.data as Record<string, unknown>
       return {
@@ -83,7 +92,7 @@ export default function Toolbar({ registry }: ToolbarProps) {
       data: e.data || { edge_type: 'normal' },
     })),
     viewport: { x: 0, y: 0, zoom: 1 },
-  })
+  }), [nodes, edges])
 
   const handleSave = useCallback(async () => {
     const graphJson = buildGraphJson()
@@ -99,19 +108,81 @@ export default function Toolbar({ registry }: ToolbarProps) {
     } catch (e) {
       setValidationMsg(`Save failed: ${e instanceof Error ? e.message : 'unknown'}`)
     }
-  }, [pipelineId, name, nodes, edges, createMutation, updateMutation, setPipeline, setDirty])
+  }, [pipelineId, name, nodes, edges, buildGraphJson, createMutation, updateMutation, setPipeline, setDirty])
+
+  const handleSaveAs = useCallback(async () => {
+    const newName = prompt('Save as:', name)
+    if (!newName) return
+    const graphJson = buildGraphJson()
+    try {
+      const result = await createMutation.mutateAsync({ name: newName, graph_json: graphJson })
+      setPipeline(result.id, result.name, nodes, edges)
+      setName(result.name)
+      setDirty(false)
+      setValidationMsg('Saved as new pipeline!')
+    } catch (e) {
+      setValidationMsg(`Save failed: ${e instanceof Error ? e.message : 'unknown'}`)
+    }
+  }, [name, nodes, edges, buildGraphJson, createMutation, setPipeline, setDirty])
 
   // Register keyboard shortcuts
   useKeyboardShortcuts(handleSave)
+
+  const handleNew = () => {
+    if (isDirty && !confirm('Discard unsaved changes?')) return
+    clear()
+    setName('Untitled Pipeline')
+    setShowFileMenu(false)
+  }
+
+  const handleOpen = () => {
+    refetchPipelines()
+    setShowOpenDialog(true)
+    setShowFileMenu(false)
+  }
+
+  const loadPipeline = (pipeline: PipelineData) => {
+    if (isDirty && !confirm('Discard unsaved changes?')) return
+    const graph = pipeline.graph_json as { nodes?: unknown[]; edges?: unknown[] }
+    const loadedNodes = (graph.nodes || []).map((n: any) => {
+      const typeId = n.type || n.data?.type_id || ''
+      const nodeDef = registry?.node_types[typeId]
+      return { ...n, data: { ...n.data, nodeDef } }
+    })
+    const loadedEdges = (graph.edges || []).map((e: any) => ({
+      ...e,
+      id: e.id || `e_${Math.random().toString(36).slice(2, 8)}`,
+    }))
+    setPipeline(pipeline.id, pipeline.name, loadedNodes, loadedEdges)
+    setName(pipeline.name)
+    setShowOpenDialog(false)
+    setTimeout(() => reactFlow.fitView({ padding: 0.15, duration: 300 }), 50)
+    setValidationMsg('Loaded!')
+  }
+
+  const handleDeletePipeline = async (id: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!confirm('Delete this pipeline permanently?')) return
+    try {
+      await deleteMutation.mutateAsync(id)
+      refetchPipelines()
+      if (pipelineId === id) {
+        clear()
+        setName('Untitled Pipeline')
+      }
+    } catch (err) {
+      setValidationMsg(`Delete failed: ${err instanceof Error ? err.message : 'unknown'}`)
+    }
+  }
 
   const handleValidate = async () => {
     const graphJson = buildGraphJson()
     try {
       const result = await validateMutation.mutateAsync(graphJson)
       if (result.valid) {
-        setValidationMsg(`Valid! ${result.warnings.length ? `(${result.warnings.length} warnings)` : ''}`)
+        setValidationMsg(`No errors${result.warnings.length ? ` (${result.warnings.length} warnings)` : ''}`)
       } else {
-        setValidationMsg(`Invalid: ${result.errors.join('; ')}`)
+        setValidationMsg(`Errors: ${result.errors.join('; ')}`)
       }
     } catch {
       if (registry) {
@@ -120,9 +191,9 @@ export default function Toolbar({ registry }: ToolbarProps) {
           registry,
         )
         if (result.valid) {
-          setValidationMsg(`Valid (local)! ${result.warnings.length ? `(${result.warnings.length} warnings)` : ''}`)
+          setValidationMsg(`No errors${result.warnings.length ? ` (${result.warnings.length} warnings)` : ''}`)
         } else {
-          setValidationMsg(`Invalid: ${result.errors.join('; ')}`)
+          setValidationMsg(`Errors: ${result.errors.join('; ')}`)
         }
       } else {
         setValidationMsg('Validation unavailable')
@@ -130,7 +201,7 @@ export default function Toolbar({ registry }: ToolbarProps) {
     }
   }
 
-  const handlePreview = async () => {
+  const handleExecute = async () => {
     if (!pipelineId) {
       setPreviewResult({ error: 'Save the pipeline first' })
       return
@@ -139,11 +210,12 @@ export default function Toolbar({ registry }: ToolbarProps) {
       const result = await previewMutation.mutateAsync(pipelineId)
       setPreviewResult(result)
     } catch (e) {
-      setPreviewResult({ error: `Preview error: ${e instanceof Error ? e.message : 'unknown'}` })
+      setPreviewResult({ error: `Execution error: ${e instanceof Error ? e.message : 'unknown'}` })
     }
   }
 
-  const loadTemplate = (tmpl: PipelineData) => {
+  const loadTemplate = (tmpl: PipelineData | Template) => {
+    if (isDirty && !confirm('Discard unsaved changes?')) return
     const graph = tmpl.graph_json as { nodes?: unknown[]; edges?: unknown[] }
     const tmplNodes = (graph.nodes || []).map((n: any) => {
       const typeId = n.type || n.data?.type_id || ''
@@ -157,7 +229,6 @@ export default function Toolbar({ registry }: ToolbarProps) {
     setPipeline(null, `${tmpl.name} (copy)`, tmplNodes, tmplEdges)
     setName(`${tmpl.name} (copy)`)
     setShowTemplates(false)
-    // Auto-fit after loading template
     setTimeout(() => reactFlow.fitView({ padding: 0.15, duration: 300 }), 50)
   }
 
@@ -172,6 +243,7 @@ export default function Toolbar({ registry }: ToolbarProps) {
     a.download = `${name.replace(/[^a-zA-Z0-9]/g, '_').toLowerCase()}.json`
     a.click()
     URL.revokeObjectURL(url)
+    setShowFileMenu(false)
   }
 
   // Import pipeline from JSON file
@@ -201,16 +273,60 @@ export default function Toolbar({ registry }: ToolbarProps) {
       }
     }
     reader.readAsText(file)
-    // Reset input so same file can be re-imported
     e.target.value = ''
   }
 
   // Count feedback edges
   const feedbackCount = edges.filter(e => (e.data as Record<string, unknown>)?.edge_type === 'feedback').length
+  const isSaving = createMutation.isPending || updateMutation.isPending
 
   return (
     <>
       <div className="h-12 bg-white border-b border-gray-200 flex items-center px-4 gap-2 shrink-0">
+        {/* File menu */}
+        <div className="relative" ref={fileMenuRef}>
+          <button
+            onClick={() => setShowFileMenu(!showFileMenu)}
+            className="px-3 py-1 bg-white border border-gray-200 text-xs font-medium rounded hover:bg-gray-50"
+          >
+            File
+          </button>
+          {showFileMenu && (
+            <div className="absolute top-8 left-0 bg-white border border-gray-200 rounded-lg shadow-lg py-1 z-50 w-52">
+              <button onClick={handleNew} className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-xs flex justify-between">
+                <span>New Pipeline</span>
+                <span className="text-gray-300">Ctrl+N</span>
+              </button>
+              <button onClick={handleOpen} className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-xs flex justify-between">
+                <span>Open...</span>
+                <span className="text-gray-300">Ctrl+O</span>
+              </button>
+              <div className="h-px bg-gray-100 my-1" />
+              <button onClick={() => { handleSave(); setShowFileMenu(false) }} disabled={isSaving} className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-xs flex justify-between disabled:opacity-50">
+                <span>{pipelineId ? 'Save' : 'Save (new)'}</span>
+                <span className="text-gray-300">Ctrl+S</span>
+              </button>
+              <button onClick={() => { handleSaveAs(); setShowFileMenu(false) }} disabled={isSaving} className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-xs disabled:opacity-50">
+                Save As...
+              </button>
+              <div className="h-px bg-gray-100 my-1" />
+              <button onClick={handleExport} disabled={nodes.length === 0} className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-xs disabled:opacity-50">
+                Export as JSON
+              </button>
+              <button onClick={() => { fileInputRef.current?.click(); setShowFileMenu(false) }} className="w-full text-left px-3 py-1.5 hover:bg-gray-50 text-xs">
+                Import from JSON
+              </button>
+            </div>
+          )}
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json"
+          onChange={handleImport}
+          className="hidden"
+        />
+
         {/* Pipeline name */}
         <input
           type="text"
@@ -244,30 +360,34 @@ export default function Toolbar({ registry }: ToolbarProps) {
 
         <div className="w-px h-6 bg-gray-200" />
 
-        {/* Actions */}
+        {/* Save (quick) */}
         <button
           onClick={handleSave}
-          disabled={createMutation.isPending || updateMutation.isPending}
+          disabled={isSaving}
           className="px-3 py-1 bg-slate-800 text-white text-xs font-medium rounded hover:bg-slate-700 disabled:opacity-50"
-          title="Ctrl+S"
+          title="Save to database (Ctrl+S)"
         >
-          {createMutation.isPending || updateMutation.isPending ? 'Saving...' : 'Save'}
+          {isSaving ? 'Saving...' : 'Save'}
         </button>
 
+        {/* Check errors */}
         <button
           onClick={handleValidate}
           disabled={validateMutation.isPending}
           className="px-3 py-1 bg-white border border-gray-200 text-xs font-medium rounded hover:bg-gray-50"
+          title="Check for connection errors and port mismatches"
         >
-          Validate
+          Check Errors
         </button>
 
+        {/* Execute pipeline */}
         <button
-          onClick={handlePreview}
+          onClick={handleExecute}
           disabled={previewMutation.isPending || !pipelineId}
-          className="px-3 py-1 bg-white border border-gray-200 text-xs font-medium rounded hover:bg-gray-50 disabled:opacity-50"
+          className="px-3 py-1 bg-emerald-600 text-white text-xs font-medium rounded hover:bg-emerald-500 disabled:opacity-50"
+          title="Execute the entire pipeline end-to-end (save first)"
         >
-          Run Preview
+          {previewMutation.isPending ? 'Running...' : 'Execute'}
         </button>
 
         <div className="w-px h-6 bg-gray-200" />
@@ -299,30 +419,6 @@ export default function Toolbar({ registry }: ToolbarProps) {
           )}
         </div>
 
-        {/* Export / Import */}
-        <button
-          onClick={handleExport}
-          disabled={nodes.length === 0}
-          className="px-2 py-1 bg-white border border-gray-200 text-xs font-medium rounded hover:bg-gray-50 disabled:opacity-50"
-          title="Export pipeline as JSON"
-        >
-          Export
-        </button>
-        <button
-          onClick={() => fileInputRef.current?.click()}
-          className="px-2 py-1 bg-white border border-gray-200 text-xs font-medium rounded hover:bg-gray-50"
-          title="Import pipeline from JSON"
-        >
-          Import
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".json"
-          onChange={handleImport}
-          className="hidden"
-        />
-
         {/* Spacer */}
         <div className="flex-1" />
 
@@ -331,22 +427,74 @@ export default function Toolbar({ registry }: ToolbarProps) {
           <span>{nodes.length} nodes</span>
           <span>{edges.length} edges</span>
           {feedbackCount > 0 && <span className="text-orange-400">{feedbackCount} feedback</span>}
+          {pipelineId && <span className="text-blue-400" title={pipelineId}>saved</span>}
         </div>
 
         {/* Status messages */}
         {validationMsg && (
-          <span className={`text-xs shrink-0 ml-2 ${validationMsg.startsWith('Valid') || validationMsg === 'Saved!' || validationMsg === 'Imported!' ? 'text-green-600' : 'text-red-500'}`}>
+          <span className={`text-xs shrink-0 ml-2 ${validationMsg.startsWith('No errors') || validationMsg === 'Saved!' || validationMsg === 'Imported!' || validationMsg === 'Loaded!' || validationMsg.startsWith('Saved as') ? 'text-green-600' : 'text-red-500'}`}>
             {validationMsg}
           </span>
         )}
       </div>
 
-      {/* Preview result modal */}
+      {/* Open Pipeline dialog */}
+      {showOpenDialog && (
+        <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50" onClick={() => setShowOpenDialog(false)}>
+          <div className="bg-white rounded-lg shadow-xl w-[480px] max-h-[70vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center px-5 py-3 border-b border-gray-100">
+              <h3 className="text-sm font-bold text-gray-800">Open Pipeline</h3>
+              <button onClick={() => setShowOpenDialog(false)} className="text-gray-400 hover:text-gray-600 text-sm">Close</button>
+            </div>
+            <div className="flex-1 overflow-y-auto">
+              {!savedPipelines || savedPipelines.length === 0 ? (
+                <div className="px-5 py-8 text-center text-xs text-gray-400">
+                  No saved pipelines yet. Use Save to store your first pipeline.
+                </div>
+              ) : (
+                <div className="divide-y divide-gray-50">
+                  {savedPipelines.map((p) => (
+                    <div
+                      key={p.id}
+                      onClick={() => loadPipeline(p)}
+                      className={`px-5 py-3 hover:bg-gray-50 cursor-pointer flex items-center justify-between group ${pipelineId === p.id ? 'bg-blue-50' : ''}`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs font-medium text-gray-800 truncate">{p.name}</div>
+                        <div className="text-[10px] text-gray-400 mt-0.5">
+                          {p.description || `${(p.graph_json as any)?.nodes?.length || 0} nodes`}
+                          {p.updated_at && (
+                            <span className="ml-2">{new Date(p.updated_at).toLocaleDateString()}</span>
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0 ml-3">
+                        {pipelineId === p.id && (
+                          <span className="text-[9px] text-blue-500 font-medium">current</span>
+                        )}
+                        <button
+                          onClick={(e) => handleDeletePipeline(p.id, e)}
+                          className="text-[10px] text-red-400 hover:text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Delete pipeline"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Execute result modal */}
       {previewResult && (
         <div className="fixed inset-0 bg-black/20 flex items-center justify-center z-50" onClick={() => setPreviewResult(null)}>
           <div className="bg-white rounded-lg shadow-xl p-5 max-w-xl w-full max-h-[80vh] overflow-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-3">
-              <h3 className="text-sm font-bold">Preview Result</h3>
+              <h3 className="text-sm font-bold">Execution Result</h3>
               <button onClick={() => setPreviewResult(null)} className="text-gray-400 hover:text-gray-600 text-sm">Close</button>
             </div>
 

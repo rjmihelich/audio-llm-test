@@ -48,6 +48,17 @@ class CorpusCategoryEnum(str, enum.Enum):
     climate = "climate"
     phone = "phone"
     general = "general"
+    # Adversarial safety categories
+    direct_harm = "direct_harm"
+    jailbreak = "jailbreak"
+    social_engineering = "social_engineering"
+    privacy_extraction = "privacy_extraction"
+    illegal_activity = "illegal_activity"
+    self_harm = "self_harm"
+    discrimination = "discrimination"
+    distraction = "distraction"
+    regulatory_violation = "regulatory_violation"
+    dual_use = "dual_use"
 
 
 class SampleStatusEnum(str, enum.Enum):
