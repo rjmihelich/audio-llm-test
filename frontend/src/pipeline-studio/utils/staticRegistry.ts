@@ -16,23 +16,35 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
   node_types: {
     speech_source: {
       type_id: 'speech_source', label: 'Speech Source', category: 'sources', color: '#A3E635',
-      description: 'Clean speech audio from corpus or PipelineInput',
+      description: 'Clean speech audio from corpus, sample library, or file',
       dynamic_inputs: false,
       inputs: [],
       outputs: [{ name: 'audio_out', type: 'audio', required: false, description: '' }],
       config_fields: [
-        { name: 'source_mode', type: 'select', label: 'Source', default: 'pipeline_input', options: [{ value: 'pipeline_input', label: 'From Test Case' }, { value: 'file', label: 'Audio File' }], description: '' },
+        { name: 'source_mode', type: 'select', label: 'Source', default: 'pipeline_input', options: [{ value: 'pipeline_input', label: 'From Test Case' }, { value: 'corpus_entry', label: 'Corpus Entry (TTS)' }, { value: 'speech_sample', label: 'Pre-recorded Sample' }, { value: 'file', label: 'Audio File' }], description: '' },
+        { name: 'corpus_entry_id', type: 'string', label: 'Corpus Entry ID', default: '', description: 'UUID — browse at /corpus' },
+        { name: 'corpus_category', type: 'select', label: 'Corpus Category', default: '', options: [{ value: '', label: 'Any' }, { value: 'harvard_sentence', label: 'Harvard Sentences' }, { value: 'navigation', label: 'Navigation' }, { value: 'media', label: 'Media Control' }, { value: 'climate', label: 'Climate Control' }, { value: 'phone', label: 'Phone' }, { value: 'general', label: 'General' }, { value: 'direct_harm', label: 'Direct Harm (Adversarial)' }, { value: 'jailbreak', label: 'Jailbreak (Adversarial)' }], description: 'Filter corpus entries by category' },
+        { name: 'speech_sample_id', type: 'string', label: 'Speech Sample ID', default: '', description: 'UUID of pre-recorded sample' },
+        { name: 'voice_id', type: 'string', label: 'Voice ID', default: '', description: 'Voice for TTS synthesis' },
+        { name: 'tts_provider', type: 'select', label: 'TTS Provider', default: 'edge', options: [{ value: 'edge', label: 'Edge (Free)' }, { value: 'openai', label: 'OpenAI' }, { value: 'google', label: 'Google' }, { value: 'elevenlabs', label: 'ElevenLabs' }, { value: 'piper', label: 'Piper (Local)' }, { value: 'azure', label: 'Azure' }], description: '' },
+        { name: 'file_path', type: 'string', label: 'File Path', default: '', description: 'Path to WAV file' },
+        { name: 'level_db', type: 'slider', label: 'Level (dB)', default: 0, min: -30, max: 12, step: 0.5, description: 'Gain applied to source audio' },
       ],
     },
     noise_generator: {
       type_id: 'noise_generator', label: 'Noise Generator', category: 'sources', color: '#A3E635',
-      description: 'Generate noise: white, pink, babble, traffic, wind',
+      description: 'Synthetic noise, car cabin recordings, or noise files',
       dynamic_inputs: false,
       inputs: [],
       outputs: [{ name: 'audio_out', type: 'audio', required: false, description: '' }],
       config_fields: [
-        { name: 'noise_type', type: 'select', label: 'Noise Type', default: 'pink_lpf', options: [{ value: 'white', label: 'White' }, { value: 'pink', label: 'Pink' }, { value: 'pink_lpf', label: 'Pink (LPF)' }, { value: 'babble', label: 'Babble' }, { value: 'traffic', label: 'Traffic' }, { value: 'wind', label: 'Wind' }, { value: 'hvac_fan', label: 'HVAC Fan' }, { value: 'secondary_voice', label: 'Secondary Voice' }, { value: 'silence', label: 'Silence' }], description: '' },
+        { name: 'noise_type', type: 'select', label: 'Noise Type', default: 'pink_lpf', options: [{ value: 'white', label: 'White' }, { value: 'pink', label: 'Pink' }, { value: 'pink_lpf', label: 'Pink (LPF)' }, { value: 'babble', label: 'Babble' }, { value: 'traffic', label: 'Traffic' }, { value: 'wind', label: 'Wind' }, { value: 'hvac_fan', label: 'HVAC Fan' }, { value: 'secondary_voice', label: 'Secondary Voice' }, { value: 'silence', label: 'Silence' }, { value: 'car_noise', label: 'Car Noise (from library)' }, { value: 'file', label: 'Noise File (WAV)' }], description: '' },
+        { name: 'car_id', type: 'string', label: 'Car ID', default: '', description: 'UUID of car profile — browse at /browser' },
+        { name: 'car_noise_category', type: 'select', label: 'Car Noise Category', default: 'road', options: [{ value: 'road', label: 'Road Noise' }, { value: 'fan', label: 'HVAC Fan' }], description: '' },
+        { name: 'car_speed', type: 'slider', label: 'Speed / Fan Level', default: 30, min: 0, max: 80, step: 5, description: 'MPH for road, 0-10 for fan' },
+        { name: 'noise_file_path', type: 'string', label: 'Noise File Path', default: '', description: 'Path to WAV noise file' },
         { name: 'seed', type: 'number', label: 'Random Seed', default: null, description: 'Leave empty for random' },
+        { name: 'duration_s', type: 'number', label: 'Duration (s)', default: 0, description: '0 = match speech source length' },
       ],
     },
     audio_file: {
@@ -93,28 +105,6 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
         { name: 'gain_db', type: 'slider', label: 'Gain (dB)', default: 0, min: -60, max: 24, step: 0.5, description: '' },
       ],
     },
-    audio_preprocess: {
-      type_id: 'audio_preprocess', label: 'Audio Pre-Processing', category: 'processing', color: '#FBBF24',
-      description: 'AEC, AGC, noise gate, VAD',
-      dynamic_inputs: false,
-      inputs: [{ name: 'audio_in', type: 'audio', required: true, description: '' }],
-      outputs: [{ name: 'audio_out', type: 'audio', required: false, description: '' }],
-      config_fields: [
-        { name: 'enable_agc', type: 'boolean', label: 'Auto Gain Control', default: true, description: '' },
-        { name: 'enable_noise_gate', type: 'boolean', label: 'Noise Gate', default: false, description: '' },
-      ],
-    },
-    audio_postprocess: {
-      type_id: 'audio_postprocess', label: 'Audio Post-Processing', category: 'processing', color: '#FBBF24',
-      description: 'Normalization, limiting',
-      dynamic_inputs: false,
-      inputs: [{ name: 'audio_in', type: 'audio', required: true, description: '' }],
-      outputs: [{ name: 'audio_out', type: 'audio', required: false, description: '' }],
-      config_fields: [
-        { name: 'normalize', type: 'boolean', label: 'Normalize', default: true, description: '' },
-        { name: 'enable_limiter', type: 'boolean', label: 'Limiter', default: true, description: '' },
-      ],
-    },
     audio_buffer: {
       type_id: 'audio_buffer', label: 'Audio Buffer', category: 'processing', color: '#FBBF24',
       description: 'Chunk/buffer audio for streaming simulation',
@@ -145,13 +135,15 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
     },
     tts: {
       type_id: 'tts', label: 'Text-to-Speech', category: 'speech', color: '#818CF8',
-      description: 'Convert text to audio',
+      description: 'Convert text to audio using a TTS provider',
       dynamic_inputs: false,
       inputs: [{ name: 'text_in', type: 'text', required: true, description: '' }],
       outputs: [{ name: 'audio_out', type: 'audio', required: false, description: '' }],
       config_fields: [
-        { name: 'provider', type: 'select', label: 'Provider', default: 'edge', options: [{ value: 'openai', label: 'OpenAI' }, { value: 'elevenlabs', label: 'ElevenLabs' }, { value: 'edge', label: 'Edge (Free)' }, { value: 'piper', label: 'Piper (Local)' }], description: '' },
-        { name: 'voice_id', type: 'string', label: 'Voice ID', default: '', description: '' },
+        { name: 'provider', type: 'select', label: 'Provider', default: 'edge', options: [{ value: 'openai', label: 'OpenAI' }, { value: 'google', label: 'Google Cloud' }, { value: 'elevenlabs', label: 'ElevenLabs' }, { value: 'azure', label: 'Azure' }, { value: 'edge', label: 'Edge (Free)' }, { value: 'gtts', label: 'gTTS (Free)' }, { value: 'piper', label: 'Piper (Local)' }, { value: 'coqui', label: 'Coqui (Local)' }, { value: 'bark', label: 'Bark (Local)' }, { value: 'espeak', label: 'eSpeak (System)' }], description: '' },
+        { name: 'voice_id', type: 'string', label: 'Voice ID', default: '', description: 'Provider-specific voice ID. Browse at /settings.' },
+        { name: 'language', type: 'select', label: 'Language', default: 'en', options: [{ value: 'en', label: 'English' }, { value: 'es', label: 'Spanish' }, { value: 'fr', label: 'French' }, { value: 'de', label: 'German' }, { value: 'it', label: 'Italian' }, { value: 'pt', label: 'Portuguese' }, { value: 'ja', label: 'Japanese' }, { value: 'ko', label: 'Korean' }, { value: 'zh', label: 'Mandarin' }, { value: 'ru', label: 'Russian' }], description: '' },
+        { name: 'speed', type: 'slider', label: 'Speed', default: 1.0, min: 0.5, max: 2.0, step: 0.1, description: 'Speech rate multiplier' },
       ],
     },
     stt: {
@@ -162,6 +154,7 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
       outputs: [{ name: 'text_out', type: 'text', required: false, description: '' }],
       config_fields: [
         { name: 'backend', type: 'select', label: 'Backend', default: 'whisper_local', options: [{ value: 'whisper_local', label: 'Whisper (Local)' }, { value: 'whisper_api', label: 'Whisper (API)' }, { value: 'deepgram', label: 'Deepgram' }], description: '' },
+        { name: 'model_size', type: 'select', label: 'Model Size', default: 'base', options: [{ value: 'tiny', label: 'Tiny (fastest)' }, { value: 'base', label: 'Base' }, { value: 'small', label: 'Small' }, { value: 'medium', label: 'Medium' }, { value: 'large', label: 'Large (best)' }], description: 'Whisper model size — larger = more accurate but slower' },
       ],
     },
     llm: {
@@ -169,7 +162,7 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
       description: 'Request/response LLM (GPT-4o, Gemini, Claude, Ollama)',
       dynamic_inputs: false,
       inputs: [
-        { name: 'audio_in', type: 'audio', required: false, description: 'Audio input' },
+        { name: 'audio_in', type: 'audio', required: false, description: 'Audio input (multimodal)' },
         { name: 'text_in', type: 'text', required: false, description: 'Text input' },
       ],
       outputs: [
@@ -177,9 +170,15 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
         { name: 'audio_out', type: 'audio', required: false, description: '' },
       ],
       config_fields: [
-        { name: 'backend', type: 'select', label: 'Backend', default: 'openai:gpt-4o-audio-preview', options: [{ value: 'openai:gpt-4o-audio-preview', label: 'GPT-4o Audio' }, { value: 'gemini:gemini-2.0-flash', label: 'Gemini 2.0 Flash' }, { value: 'anthropic:claude-haiku-4-5-20251001', label: 'Claude Haiku' }, { value: 'ollama:mistral', label: 'Ollama Mistral' }], description: '' },
+        { name: 'backend', type: 'select', label: 'Backend', default: 'openai:gpt-4o-audio-preview', options: [{ value: 'openai:gpt-4o-audio-preview', label: 'GPT-4o Audio' }, { value: 'openai:gpt-4o-mini-audio-preview', label: 'GPT-4o Mini Audio' }, { value: 'openai:gpt-4o', label: 'GPT-4o' }, { value: 'openai:gpt-4o-mini', label: 'GPT-4o Mini' }, { value: 'gemini:gemini-2.0-flash', label: 'Gemini 2.0 Flash' }, { value: 'gemini:gemini-2.5-pro-preview-06-05', label: 'Gemini 2.5 Pro' }, { value: 'anthropic:claude-haiku-4-5-20251001', label: 'Claude Haiku' }, { value: 'anthropic:claude-sonnet-4-6', label: 'Claude Sonnet' }, { value: 'anthropic:claude-opus-4-6', label: 'Claude Opus' }, { value: 'ollama:llama3.1', label: 'Ollama — Llama 3.1' }, { value: 'ollama:llama3.2', label: 'Ollama — Llama 3.2' }, { value: 'ollama:mistral', label: 'Ollama — Mistral' }, { value: 'ollama:mixtral', label: 'Ollama — Mixtral' }, { value: 'ollama:gemma2', label: 'Ollama — Gemma 2' }, { value: 'ollama:phi3', label: 'Ollama — Phi-3' }, { value: 'ollama:qwen2.5', label: 'Ollama — Qwen 2.5' }, { value: 'ollama:deepseek-r1', label: 'Ollama — DeepSeek R1' }, { value: 'ollama:command-r', label: 'Ollama — Command R' }], description: "For Ollama, use 'ollama:<model>' for any model name" },
+        { name: 'ollama_custom_model', type: 'string', label: 'Ollama Custom Model', default: '', description: "Override: type any Ollama model name (e.g. 'codellama:13b')" },
         { name: 'system_prompt', type: 'string', label: 'System Prompt', default: 'You are a helpful in-car voice assistant.', description: '' },
         { name: 'temperature', type: 'slider', label: 'Temperature', default: 0.7, min: 0, max: 2, step: 0.1, description: '' },
+        { name: 'top_p', type: 'slider', label: 'Top P', default: 0.9, min: 0, max: 1, step: 0.05, description: 'Nucleus sampling threshold' },
+        { name: 'top_k', type: 'slider', label: 'Top K', default: 40, min: 0, max: 200, step: 1, description: 'Top-k sampling (0=disabled)' },
+        { name: 'max_tokens', type: 'number', label: 'Max Tokens', default: 256, description: 'Maximum output tokens (0=model default)' },
+        { name: 'repeat_penalty', type: 'slider', label: 'Repeat Penalty', default: 1.1, min: 1, max: 2, step: 0.05, description: 'Repetition penalty' },
+        { name: 'num_ctx', type: 'number', label: 'Context Length', default: 4096, description: 'Context window size (Ollama)' },
       ],
     },
     llm_realtime: {
@@ -427,19 +426,32 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
     },
     text_output: {
       type_id: 'text_output', label: 'Text Output', category: 'output', color: '#94A3B8',
-      description: 'Display text result',
+      description: 'Display, save to file, or log text result',
       dynamic_inputs: false,
       inputs: [{ name: 'text_in', type: 'text', required: true, description: '' }],
       outputs: [],
-      config_fields: [{ name: 'label', type: 'string', label: 'Label', default: 'Output', description: '' }],
+      config_fields: [
+        { name: 'label', type: 'string', label: 'Label', default: 'Output', description: '' },
+        { name: 'output_mode', type: 'select', label: 'Output Mode', default: 'display', options: [{ value: 'display', label: 'Display in UI' }, { value: 'file', label: 'Write to File' }, { value: 'both', label: 'Display + File' }], description: '' },
+        { name: 'file_path', type: 'string', label: 'File Path', default: '', description: 'Write output text to this file' },
+        { name: 'output_dir', type: 'string', label: 'Output Directory', default: '', description: 'Write per-run output files here' },
+        { name: 'file_format', type: 'select', label: 'File Format', default: 'txt', options: [{ value: 'txt', label: 'Plain Text (.txt)' }, { value: 'json', label: 'JSON (.json)' }, { value: 'csv', label: 'CSV (.csv)' }], description: '' },
+      ],
     },
     audio_output: {
       type_id: 'audio_output', label: 'Audio Output', category: 'output', color: '#94A3B8',
-      description: 'Save or play audio result',
+      description: 'Play audio live, save to file, or both',
       dynamic_inputs: false,
       inputs: [{ name: 'audio_in', type: 'audio', required: true, description: '' }],
       outputs: [],
-      config_fields: [{ name: 'label', type: 'string', label: 'Label', default: 'Output', description: '' }],
+      config_fields: [
+        { name: 'label', type: 'string', label: 'Label', default: 'Output', description: '' },
+        { name: 'output_mode', type: 'select', label: 'Output Mode', default: 'display', options: [{ value: 'display', label: 'Display in UI' }, { value: 'file', label: 'Write to File' }, { value: 'audio_device', label: 'Play on Audio Device' }, { value: 'file_and_device', label: 'File + Audio Device' }, { value: 'all', label: 'Display + File + Device' }], description: '' },
+        { name: 'file_path', type: 'string', label: 'File Path', default: '', description: 'Save audio to this WAV file' },
+        { name: 'output_dir', type: 'string', label: 'Output Directory', default: '', description: 'Save per-run WAV files here' },
+        { name: 'audio_device', type: 'string', label: 'Audio Device', default: 'default', description: "Audio output device name ('default' for system)" },
+        { name: 'sample_rate', type: 'select', label: 'Output Sample Rate', default: '16000', options: [{ value: '8000', label: '8 kHz' }, { value: '16000', label: '16 kHz' }, { value: '22050', label: '22.05 kHz' }, { value: '44100', label: '44.1 kHz' }, { value: '48000', label: '48 kHz' }], description: '' },
+      ],
     },
     eval_output: {
       type_id: 'eval_output', label: 'Eval Output', category: 'output', color: '#94A3B8',

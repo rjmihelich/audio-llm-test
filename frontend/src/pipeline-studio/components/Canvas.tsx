@@ -27,7 +27,7 @@ export default function Canvas({ registry }: CanvasProps) {
   const {
     nodes, edges,
     onNodesChange, onEdgesChange, onConnect,
-    addNode, selectNode,
+    addNode, selectNode, removeEdges,
   } = useGraphStore()
 
   const reactFlowRef = useRef<ReactFlowInstance | null>(null)
@@ -128,9 +128,14 @@ export default function Canvas({ registry }: CanvasProps) {
         onDragOver={onDragOver}
         onDrop={onDrop}
         fitView
+        fitViewOptions={{ padding: 0.5 }}
+        defaultViewport={{ x: 0, y: 0, zoom: 0.65 }}
+        minZoom={0.1}
+        maxZoom={2}
         snapToGrid
         snapGrid={[20, 20]}
-        deleteKeyCode="Delete"
+        deleteKeyCode={['Backspace', 'Delete']}
+        onEdgesDelete={(edges) => removeEdges(edges.map(e => e.id))}
         multiSelectionKeyCode="Shift"
       >
         <Background gap={20} size={1} />

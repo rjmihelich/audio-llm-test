@@ -15,8 +15,6 @@ _EXECUTOR_MAP: dict[str, str] = {
     "echo_simulator": "audio_processing",
     "eq_filter": "audio_processing",
     "gain": "audio_processing",
-    "audio_preprocess": "audio_processing",
-    "audio_postprocess": "audio_processing",
     "audio_buffer": "audio_processing",
     # network
     "network_sim": "network_sim",
