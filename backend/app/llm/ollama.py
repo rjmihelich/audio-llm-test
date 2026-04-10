@@ -151,7 +151,17 @@ class OllamaBackend:
             # Find models that start with our base name
             candidates = [n for n in names if n.startswith(f"{self._model}:")]
             if candidates:
-                # Prefer smallest variant for speed (:latest, :8b, :7b over :70b)
+                # Prefer :latest first, then smallest parameter count
+                def _sort_key(name: str) -> tuple:
+                    tag = name.split(":", 1)[1] if ":" in name else ""
+                    if tag == "latest":
+                        return (0, 0)
+                    # Extract numeric size (e.g. "8b" → 8, "70b" → 70)
+                    import re
+                    m = re.search(r"(\d+)[bB]", tag)
+                    size = int(m.group(1)) if m else 999
+                    return (1, size)
+                candidates.sort(key=_sort_key)
                 self._model = candidates[0]
                 logger.info("Resolved model '%s' → '%s'", self._model.split(":")[0], self._model)
         except Exception as e:
