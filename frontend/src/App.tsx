@@ -13,6 +13,7 @@ import TelephonyRuns from "./pages/TelephonyRuns";
 import Settings from "./pages/Settings";
 import AudioBrowser from "./pages/AudioBrowser";
 import Prompts from "./pages/Prompts";
+import PipelineStudio from "./pipeline-studio/PipelineStudio";
 
 const navItems = [
   { to: "/", label: "Dashboard", icon: "\u{1F4CA}" },
@@ -23,8 +24,8 @@ const navItems = [
   { to: "/telephony", label: "Telephony Suites", icon: "\u{1F4DE}" },
   { to: "/telephony-runs", label: "Telephony Results", icon: "\u{1F4F6}" },
   { to: "/prompts", label: "Prompt Library", icon: "\u{1F4AC}" },
+  { to: "/pipeline-studio", label: "Pipeline Studio", icon: "\u{1F527}" },
   { to: "/settings", label: "Settings", icon: "\u{2699}" },
-  { to: "/pipeline-studio", label: "Pipeline Studio", icon: "\u{1F527}", external: true, externalPath: "/pipeline-studio/" },
 ];
 
 export default function App() {
@@ -38,43 +39,29 @@ export default function App() {
   const activeRunCount = runs?.filter((r) => r.status === "running").length ?? 0;
 
   const renderNavItems = (onItemClick?: () => void) =>
-    navItems.map((item) =>
-      (item as { external?: boolean }).external ? (
-        <a
-          key={item.to}
-          href={(item as { externalPath?: string }).externalPath || item.to}
-          target="_blank"
-          rel="noopener noreferrer"
-          onClick={onItemClick}
-          className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium text-slate-300 hover:bg-slate-700/50 hover:text-white transition-colors"
-        >
-          <span className="text-base">{item.icon}</span>
-          {item.label}
-        </a>
-      ) : (
-        <NavLink
-          key={item.to}
-          to={item.to}
-          end={item.to === "/"}
-          onClick={onItemClick}
-          className={({ isActive }) =>
-            `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
-              isActive
-                ? "bg-slate-700 text-white"
-                : "text-slate-300 hover:bg-slate-700/50 hover:text-white"
-            }`
-          }
-        >
-          <span className="text-base">{item.icon}</span>
-          {item.label}
-          {item.to === "/runs" && activeRunCount > 0 && (
-            <span className="ml-auto inline-flex items-center justify-center w-5 h-5 text-[10px] font-bold text-white bg-red-500 rounded-full">
-              {activeRunCount}
-            </span>
-          )}
-        </NavLink>
-      )
-    );
+    navItems.map((item) => (
+      <NavLink
+        key={item.to}
+        to={item.to}
+        end={item.to === "/"}
+        onClick={onItemClick}
+        className={({ isActive }) =>
+          `flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
+            isActive
+              ? "bg-slate-700 text-white"
+              : "text-slate-300 hover:bg-slate-700/50 hover:text-white"
+          }`
+        }
+      >
+        <span className="text-base">{item.icon}</span>
+        {item.label}
+        {item.to === "/runs" && activeRunCount > 0 && (
+          <span className="ml-auto inline-flex items-center justify-center w-5 h-5 text-[10px] font-bold text-white bg-red-500 rounded-full">
+            {activeRunCount}
+          </span>
+        )}
+      </NavLink>
+    ));
 
   return (
     <div className="flex h-screen bg-gray-50">
@@ -151,6 +138,7 @@ export default function App() {
           <Route path="/runs/:id" element={<RunMonitor />} />
           <Route path="/results/:id" element={<Results />} />
           <Route path="/prompts" element={<Prompts />} />
+          <Route path="/pipeline-studio" element={<PipelineStudio />} />
           <Route path="/settings" element={<Settings />} />
         </Routes>
       </main>

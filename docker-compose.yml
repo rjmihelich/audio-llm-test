@@ -110,6 +110,7 @@ services:
     volumes:
       - ./frontend/src:/app/src
       - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/package.json:/app/package.json
     depends_on:
       - backend
     networks:
