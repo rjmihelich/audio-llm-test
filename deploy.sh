@@ -75,7 +75,7 @@ fi
 # ---- 1. Git pull ----
 echo -e "\n${BOLD}═══ Pulling latest code ═══${NC}"
 BEFORE=$(git rev-parse HEAD)
-git pull --ff-only
+git pull --ff-only origin main
 AFTER=$(git rev-parse HEAD)
 
 if [[ "$BEFORE" == "$AFTER" && "$FORCE_REBUILD" == "false" ]]; then
