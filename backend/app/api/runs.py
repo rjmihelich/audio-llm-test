@@ -20,6 +20,7 @@ class LaunchRunRequest(BaseModel):
     test_suite_id: str
     resume: bool = False  # If True, skip already-completed test cases
     sample_size: int | None = None  # If set, pick N random cases for a quick test
+    concurrency: dict[str, int] | None = None  # Per-backend max concurrent override
 
 
 class RunResponse(BaseModel):
@@ -117,7 +118,7 @@ async def launch_run(
             create_pool(RedisSettings.from_dsn(app_settings.redis_url)),
             timeout=5.0,
         )
-        await redis.enqueue_job("run_test_suite", str(run.id), request.sample_size)
+        await redis.enqueue_job("run_test_suite", str(run.id), request.sample_size, request.concurrency)
         await redis.close()
     except Exception as e:
         import logging

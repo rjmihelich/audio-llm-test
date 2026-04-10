@@ -28,6 +28,7 @@ from ..llm.openai_audio import OpenAIAudioBackend
 from ..llm.openai_realtime import OpenAIRealtimeBackend
 from ..llm.gemini import GeminiBackend
 from ..llm.anthropic_backend import AnthropicBackend
+from ..llm.base import RateLimitConfig
 from ..llm.ollama import OllamaBackend
 from ..llm.whisper import WhisperAPIBackend, WhisperLocalBackend
 from ..llm.deepgram_stt import DeepgramSTTBackend
@@ -139,13 +140,21 @@ async def clear_backend_consecutive(backend: str):
         pass
 
 
-def _init_backend(backend_key: str):
-    """Instantiate an LLM backend from a backend key like 'openai:gpt-4o-audio-preview'."""
+def _init_backend(backend_key: str, max_concurrent: int | None = None):
+    """Instantiate an LLM backend from a backend key like 'openai:gpt-4o-audio-preview'.
+
+    If max_concurrent is provided, it overrides the backend's default concurrency.
+    """
     prefix, _, model = backend_key.partition(":")
     if prefix == "openai":
         kwargs = {"api_key": settings.openai_api_key}
         if model:
             kwargs["model"] = model
+        if max_concurrent is not None:
+            kwargs["rate_limit"] = RateLimitConfig(
+                requests_per_minute=50, tokens_per_minute=100_000,
+                max_concurrent=max_concurrent,
+            )
         return OpenAIAudioBackend(**kwargs)
     elif prefix == "openai-realtime":
         kwargs = {"api_key": settings.openai_api_key}
@@ -156,28 +165,48 @@ def _init_backend(backend_key: str):
         kwargs = {"api_key": settings.google_api_key}
         if model:
             kwargs["model"] = model
+        if max_concurrent is not None:
+            kwargs["rate_limit"] = RateLimitConfig(
+                requests_per_minute=100, tokens_per_minute=200_000,
+                max_concurrent=max_concurrent,
+            )
         return GeminiBackend(**kwargs)
     elif prefix == "anthropic":
         kwargs = {"api_key": settings.anthropic_api_key}
         if model:
             kwargs["model"] = model
+        if max_concurrent is not None:
+            kwargs["rate_limit"] = RateLimitConfig(
+                requests_per_minute=50, tokens_per_minute=100_000,
+                max_concurrent=max_concurrent,
+            )
         return AnthropicBackend(**kwargs)
     elif prefix == "ollama":
         kwargs = {"base_url": settings.ollama_base_url}
         if model:
             kwargs["model"] = model
+        if max_concurrent is not None:
+            kwargs["max_concurrent"] = max_concurrent
+        # Note: if max_concurrent is None, OllamaBackend will auto-probe
         return OllamaBackend(**kwargs)
     else:
         raise ValueError(f"Unknown LLM backend prefix: {prefix}")
 
 
-async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None):
+async def run_test_suite(
+    ctx: dict,
+    run_id: str,
+    sample_size: int | None = None,
+    concurrency_overrides: dict[str, int] | None = None,
+):
     """Background task: execute all test cases in a test run.
 
     This is the main entry point called by the arq worker.
     It loads the test suite configuration, creates the execution
     scheduler, and runs all test cases with progress reporting.
     If sample_size is set, only a random subset of cases is executed.
+    If concurrency_overrides is set, per-backend max_concurrent values
+    are applied (e.g. {"ollama": 4, "openai": 20}).
     """
     logger.info(f"Starting test run: {run_id} (sample_size={sample_size})")
 
@@ -250,16 +279,28 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
             await session.commit()
             await broadcast_progress(run_id, {"type": "info", "message": "Run status set to running"})
 
-            # 5. Initialize LLM backends
+            # 5. Initialize LLM backends (with adaptive concurrency)
             unique_backends = {tc.llm_backend for tc in test_cases}
             await broadcast_progress(run_id, {"type": "info", "message": f"Initializing {len(unique_backends)} LLM backend(s): {', '.join(sorted(unique_backends))}"})
             backends: dict[str, object] = {}
             init_errors: list[str] = []
+            overrides = concurrency_overrides or {}
             for backend_key in unique_backends:
                 try:
-                    backends[backend_key] = _init_backend(backend_key)
+                    # Resolve concurrency override: check exact key first, then prefix
+                    prefix = backend_key.partition(":")[0]
+                    mc = overrides.get(backend_key) or overrides.get(prefix)
+                    backends[backend_key] = _init_backend(backend_key, max_concurrent=mc)
                     logger.info(f"Backend initialized: {backend_key}")
-                    await broadcast_progress(run_id, {"type": "info", "message": f"✓ Backend ready: {backend_key}"})
+
+                    # Probe Ollama backends for adaptive concurrency
+                    be = backends[backend_key]
+                    if isinstance(be, OllamaBackend):
+                        await be.probe_and_configure()
+                        concurrency_msg = f"✓ Backend ready: {backend_key} (max_concurrent={be.rate_limit.max_concurrent})"
+                    else:
+                        concurrency_msg = f"✓ Backend ready: {backend_key} (max_concurrent={be.rate_limit.max_concurrent})"
+                    await broadcast_progress(run_id, {"type": "info", "message": concurrency_msg})
                 except Exception as e:
                     error_msg = f"Failed to init backend '{backend_key}': {type(e).__name__}: {e}"
                     logger.error(error_msg, exc_info=True)
@@ -635,14 +676,15 @@ async def run_test_suite(ctx: dict, run_id: str, sample_size: int | None = None)
                 }))
 
             # 10. Create and run scheduler
-            # Allow higher concurrency for local inference to keep GPU saturated.
-            # Ollama with OLLAMA_NUM_PARALLEL can handle multiple requests in flight.
-            has_local_backend = any(
-                k.startswith("ollama") for k in backends
+            # max_workers = sum of all per-backend max_concurrent values,
+            # capped at settings.max_concurrent_workers.
+            # This ensures the global semaphore doesn't bottleneck any backend.
+            total_backend_concurrency = sum(
+                be.rate_limit.max_concurrent for be in backends.values()
             )
             max_workers = min(
+                total_backend_concurrency,
                 settings.max_concurrent_workers,
-                8 if has_local_backend else settings.max_concurrent_workers,
             )
 
             scheduler = TestScheduler(

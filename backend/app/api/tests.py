@@ -130,6 +130,15 @@ class SweepConfigRequest(BaseModel):
         default=None,
         description="Telephony sweep config. Required when 'telephony' is in pipelines.",
     )
+    concurrency: dict[str, int] | None = Field(
+        default=None,
+        description=(
+            "Per-backend max concurrent requests override. "
+            "Keys are backend prefixes or full keys (e.g. 'ollama', 'openai:gpt-4o-audio-preview'). "
+            "Values are max concurrent requests. 'ollama' defaults to auto-detected from GPU. "
+            "Example: {'ollama': 4, 'openai': 20, 'gemini': 30}"
+        ),
+    )
 
 
 class TestSuiteResponse(BaseModel):

@@ -26,18 +26,27 @@ _RETRYABLE = (
 
 
 class OllamaBackend:
-    """Local LLM via Ollama HTTP API. Text-only."""
+    """Local LLM via Ollama HTTP API. Text-only.
+
+    Concurrency is adaptive: on first use, probes the Ollama server for
+    GPU VRAM and model size, then computes optimal max_concurrent.
+    Pass max_concurrent explicitly to override auto-detection.
+    """
 
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
         model: str = "llama3.1",
         rate_limit: RateLimitConfig | None = None,
+        max_concurrent: int | None = None,
         request_timeout: float = 90.0,
     ):
         self._base_url = base_url.rstrip("/")
         self._model = model
         self._request_timeout = request_timeout
+        self._max_concurrent_override = max_concurrent
+        self._probed = False
+        self._hardware_info = None
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             timeout=httpx.Timeout(
@@ -47,11 +56,49 @@ class OllamaBackend:
                 pool=5.0,
             ),
         )
-        self._rate_limit = rate_limit or RateLimitConfig(
-            requests_per_minute=1000,  # Local, effectively unlimited
-            tokens_per_minute=1_000_000,
-            max_concurrent=8,  # Match OLLAMA_NUM_PARALLEL for full GPU utilization
-        )
+        if rate_limit:
+            self._rate_limit = rate_limit
+        elif max_concurrent is not None:
+            self._rate_limit = RateLimitConfig(
+                requests_per_minute=1000,
+                tokens_per_minute=1_000_000,
+                max_concurrent=max_concurrent,
+            )
+        else:
+            # Placeholder — will be updated by probe_and_configure()
+            self._rate_limit = RateLimitConfig(
+                requests_per_minute=1000,
+                tokens_per_minute=1_000_000,
+                max_concurrent=4,  # Conservative default until probed
+            )
+
+    async def probe_and_configure(self) -> None:
+        """Probe Ollama server and set optimal concurrency. Safe to call multiple times."""
+        if self._probed or self._max_concurrent_override is not None:
+            return
+
+        try:
+            from .ollama_probe import probe_ollama
+            self._hardware_info = await probe_ollama(
+                base_url=self._base_url,
+                model=self._model,
+            )
+            optimal = self._hardware_info.recommended_concurrency
+            self._rate_limit = RateLimitConfig(
+                requests_per_minute=1000,
+                tokens_per_minute=1_000_000,
+                max_concurrent=optimal,
+            )
+            logger.info(
+                f"Ollama adaptive concurrency for {self._model}: "
+                f"max_concurrent={optimal} "
+                f"(vram={self._hardware_info.total_vram_bytes / 1e9:.1f}GB, "
+                f"model={self._hardware_info.model_size_bytes / 1e9:.1f}GB)"
+            )
+        except Exception as e:
+            logger.warning(f"Ollama probe failed, using default concurrency: {e}")
+        finally:
+            self._probed = True
 
     @property
     def name(self) -> str:

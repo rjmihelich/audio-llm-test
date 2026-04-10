@@ -493,7 +493,8 @@ export function deleteTestSuite(
 export function launchRun(
   suiteId: string,
   resume = false,
-  sampleSize?: number
+  sampleSize?: number,
+  concurrency?: Record<string, number>
 ): Promise<RunResponse> {
   return request("/runs", {
     method: "POST",
@@ -501,6 +502,7 @@ export function launchRun(
       test_suite_id: suiteId,
       resume,
       sample_size: sampleSize ?? null,
+      concurrency: concurrency ?? null,
     }),
   });
 }
