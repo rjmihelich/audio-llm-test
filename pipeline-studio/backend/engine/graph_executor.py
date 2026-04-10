@@ -15,7 +15,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Per-node-type timeout (seconds). Keeps the total response under proxy limits.
+# Total pipeline timeout — must finish before Cloudflare's 100s proxy limit.
+_TOTAL_PIPELINE_TIMEOUT: float = 85
+
+# Per-node-type timeout (seconds). Safety valve for individual slow nodes.
 _NODE_TIMEOUTS: dict[str, float] = {
     "stt": 30,
     "llm": 45,
@@ -325,61 +328,101 @@ class GraphPipeline:
         ctx: ExecutionContext,
         feedback_values: dict[str, dict[str, Any]],
     ) -> dict[str, dict[str, Any]]:
-        """Execute all nodes in topological order.
+        """Execute nodes in topological levels — nodes at the same level run concurrently.
 
-        Slow nodes (LLM, STT) have per-node timeouts so the audio path
-        can return quickly without waiting for the text/LLM branch.
+        This lets the fast audio branch finish without waiting for slow STT/LLM nodes.
+        Slow nodes still have per-node timeouts as a safety valve, and there is a
+        total pipeline timeout (85s) to stay under the Cloudflare 100s proxy limit.
         """
         outputs: dict[str, dict[str, Any]] = {}
+        levels = self._compute_levels()
+        pipeline_deadline = asyncio.get_event_loop().time() + _TOTAL_PIPELINE_TIMEOUT
 
-        for node_id in self._graph.sorted_node_ids:
-            node = self._graph.nodes[node_id]
-
-            # Gather inputs from upstream nodes
-            node_inputs = self._gather_inputs(node_id, outputs, feedback_values)
-
-            # Skip node if a required upstream timed out (no useful inputs)
-            if any(
-                isinstance(v, dict) and v.get("_timed_out")
-                for v in node_inputs.values()
-            ):
-                logger.info("Skipping %s (%s) — upstream timed out", node_id, node.type_id)
-                outputs[node_id] = {"_timed_out": True}
+        for level_nodes in levels:
+            remaining = pipeline_deadline - asyncio.get_event_loop().time()
+            if remaining <= 0:
+                # Pipeline timeout: mark remaining nodes as timed out
+                for node_id in level_nodes:
+                    outputs[node_id] = {"_timed_out": True}
                 continue
 
-            # Apply sweep overrides to matching nodes
-            config = dict(node.config)
-            if self._snr_override is not None and node.type_id == "mixer":
-                config["snr_db"] = self._snr_override
-            if self._noise_type_override and node.type_id == "noise_generator":
-                config["noise_type"] = self._noise_type_override
-            if self._echo_config_override and node.type_id == "echo_simulator":
-                if hasattr(self._echo_config_override, "delay_ms"):
-                    config["delay_ms"] = self._echo_config_override.delay_ms
-                    config["gain_db"] = self._echo_config_override.gain_db
+            # Build coroutines for all nodes in this level
+            async def _exec_node(nid: str, deadline_remaining: float) -> tuple[str, dict]:
+                node = self._graph.nodes[nid]
+                node_inputs = self._gather_inputs(nid, outputs, feedback_values)
 
-            # Execute the node with optional timeout
-            executor = self._get_executor(node.type_id)
-            timeout = _NODE_TIMEOUTS.get(node.type_id)
+                # Skip if upstream timed out
+                if any(isinstance(v, dict) and v.get("_timed_out") for v in node_inputs.values()):
+                    logger.info("Skipping %s (%s) — upstream timed out", nid, node.type_id)
+                    return nid, {"_timed_out": True}
 
-            try:
-                if timeout:
+                config = dict(node.config)
+                if self._snr_override is not None and node.type_id == "mixer":
+                    config["snr_db"] = self._snr_override
+                if self._noise_type_override and node.type_id == "noise_generator":
+                    config["noise_type"] = self._noise_type_override
+                if self._echo_config_override and node.type_id == "echo_simulator":
+                    if hasattr(self._echo_config_override, "delay_ms"):
+                        config["delay_ms"] = self._echo_config_override.delay_ms
+                        config["gain_db"] = self._echo_config_override.gain_db
+
+                executor = self._get_executor(node.type_id)
+                node_timeout = _NODE_TIMEOUTS.get(node.type_id)
+                # Use the tighter of per-node timeout and remaining pipeline time
+                effective_timeout = min(node_timeout, deadline_remaining) if node_timeout else deadline_remaining
+
+                try:
                     node_outputs = await asyncio.wait_for(
                         executor(node, node_inputs, config, ctx),
-                        timeout=timeout,
+                        timeout=effective_timeout,
                     )
-                else:
-                    node_outputs = await executor(node, node_inputs, config, ctx)
-            except asyncio.TimeoutError:
-                logger.warning("Node %s (%s) timed out after %.0fs", node_id, node.type_id, timeout)
-                node_outputs = {"_timed_out": True}
-            except Exception as e:
-                logger.warning("Node %s (%s) failed: %s", node_id, node.type_id, e)
-                node_outputs = {"_error": str(e)}
+                except asyncio.TimeoutError:
+                    logger.warning("Node %s (%s) timed out after %.0fs", nid, node.type_id, effective_timeout)
+                    return nid, {"_timed_out": True}
+                except Exception as e:
+                    logger.warning("Node %s (%s) failed: %s", nid, node.type_id, e)
+                    return nid, {"_error": str(e)}
 
-            outputs[node_id] = node_outputs
+                return nid, node_outputs
+
+            if len(level_nodes) == 1:
+                nid, result = await _exec_node(level_nodes[0], remaining)
+                outputs[nid] = result
+            else:
+                results = await asyncio.gather(
+                    *[_exec_node(nid, remaining) for nid in level_nodes],
+                    return_exceptions=True,
+                )
+                for r in results:
+                    if isinstance(r, Exception):
+                        logger.warning("Unexpected error in parallel exec: %s", r)
+                        continue
+                    nid, result = r
+                    outputs[nid] = result
 
         return outputs
+
+    def _compute_levels(self) -> list[list[str]]:
+        """Group sorted nodes into levels — nodes at the same level have no dependencies on each other."""
+        # Build set of forward predecessors for each node
+        preds: dict[str, set[str]] = {nid: set() for nid in self._graph.nodes}
+        for edge in self._graph.forward_edges:
+            preds[edge.target].add(edge.source)
+
+        node_level: dict[str, int] = {}
+        for nid in self._graph.sorted_node_ids:
+            if not preds[nid]:
+                node_level[nid] = 0
+            else:
+                node_level[nid] = max(node_level.get(p, 0) for p in preds[nid]) + 1
+
+        # Group by level
+        max_level = max(node_level.values()) if node_level else 0
+        levels: list[list[str]] = [[] for _ in range(max_level + 1)]
+        for nid in self._graph.sorted_node_ids:
+            levels[node_level[nid]].append(nid)
+
+        return levels
 
     def _gather_inputs(
         self,
