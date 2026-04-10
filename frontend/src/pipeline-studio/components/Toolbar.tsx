@@ -169,18 +169,31 @@ export default function Toolbar({ registry }: ToolbarProps) {
       if (result.audio_wav_base64) {
         setTransport('playing')
         return new Promise<boolean>((resolve) => {
-          const audio = new Audio(`data:audio/wav;base64,${result.audio_wav_base64}`)
+          // Use blob URL instead of data URL for better browser compatibility
+          const byteChars = atob(result.audio_wav_base64)
+          const byteArray = new Uint8Array(byteChars.length)
+          for (let i = 0; i < byteChars.length; i++) {
+            byteArray[i] = byteChars.charCodeAt(i)
+          }
+          const blob = new Blob([byteArray], { type: 'audio/wav' })
+          const url = URL.createObjectURL(blob)
+          const audio = new Audio(url)
           currentAudioRef.current = audio
           audio.onended = () => {
             currentAudioRef.current = null
+            URL.revokeObjectURL(url)
             resolve(!stopRequestedRef.current)
           }
-          audio.onerror = () => {
+          audio.onerror = (e) => {
+            console.error('Audio playback error:', e)
             currentAudioRef.current = null
+            URL.revokeObjectURL(url)
             resolve(!stopRequestedRef.current)
           }
-          audio.play().catch(() => {
+          audio.play().catch((err) => {
+            console.error('Audio play() rejected:', err)
             currentAudioRef.current = null
+            URL.revokeObjectURL(url)
             resolve(!stopRequestedRef.current)
           })
         })
