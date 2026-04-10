@@ -6,10 +6,21 @@ drop into the existing test scheduler without changes.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+# Per-node-type timeout (seconds). Keeps the total response under proxy limits.
+_NODE_TIMEOUTS: dict[str, float] = {
+    "stt": 30,
+    "llm": 45,
+    "llm_realtime": 45,
+}
 
 from backend.app.audio.types import AudioBuffer
 from backend.app.pipeline.base import PipelineInput, PipelineResult
@@ -314,7 +325,11 @@ class GraphPipeline:
         ctx: ExecutionContext,
         feedback_values: dict[str, dict[str, Any]],
     ) -> dict[str, dict[str, Any]]:
-        """Execute all nodes in topological order."""
+        """Execute all nodes in topological order.
+
+        Slow nodes (LLM, STT) have per-node timeouts so the audio path
+        can return quickly without waiting for the text/LLM branch.
+        """
         outputs: dict[str, dict[str, Any]] = {}
 
         for node_id in self._graph.sorted_node_ids:
@@ -322,6 +337,15 @@ class GraphPipeline:
 
             # Gather inputs from upstream nodes
             node_inputs = self._gather_inputs(node_id, outputs, feedback_values)
+
+            # Skip node if a required upstream timed out (no useful inputs)
+            if any(
+                isinstance(v, dict) and v.get("_timed_out")
+                for v in node_inputs.values()
+            ):
+                logger.info("Skipping %s (%s) — upstream timed out", node_id, node.type_id)
+                outputs[node_id] = {"_timed_out": True}
+                continue
 
             # Apply sweep overrides to matching nodes
             config = dict(node.config)
@@ -334,9 +358,25 @@ class GraphPipeline:
                     config["delay_ms"] = self._echo_config_override.delay_ms
                     config["gain_db"] = self._echo_config_override.gain_db
 
-            # Execute the node
+            # Execute the node with optional timeout
             executor = self._get_executor(node.type_id)
-            node_outputs = await executor(node, node_inputs, config, ctx)
+            timeout = _NODE_TIMEOUTS.get(node.type_id)
+
+            try:
+                if timeout:
+                    node_outputs = await asyncio.wait_for(
+                        executor(node, node_inputs, config, ctx),
+                        timeout=timeout,
+                    )
+                else:
+                    node_outputs = await executor(node, node_inputs, config, ctx)
+            except asyncio.TimeoutError:
+                logger.warning("Node %s (%s) timed out after %.0fs", node_id, node.type_id, timeout)
+                node_outputs = {"_timed_out": True}
+            except Exception as e:
+                logger.warning("Node %s (%s) failed: %s", node_id, node.type_id, e)
+                node_outputs = {"_error": str(e)}
+
             outputs[node_id] = node_outputs
 
         return outputs
@@ -397,6 +437,8 @@ class GraphPipeline:
 
         # Walk outputs looking for known result types
         for node_id, node_outputs in outputs.items():
+            if node_outputs.get("_timed_out") or node_outputs.get("_error"):
+                continue
             node = self._graph.nodes[node_id]
 
             # Capture degraded audio from mixer/echo/postprocess
