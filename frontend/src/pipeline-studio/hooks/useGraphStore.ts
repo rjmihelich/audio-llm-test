@@ -26,6 +26,11 @@ interface GraphState {
   pipelineName: string
   isDirty: boolean
 
+  // Output log for sink nodes (text_output, etc.)
+  outputLog: string[]
+  appendOutputLog: (text: string) => void
+  clearOutputLog: () => void
+
   // History
   _past: Snapshot[]
   _future: Snapshot[]
@@ -61,6 +66,12 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   pipelineId: null,
   pipelineName: 'Untitled Pipeline',
   isDirty: false,
+
+  outputLog: [],
+  appendOutputLog: (text) => set((s) => ({
+    outputLog: [...s.outputLog.slice(-199), text],
+  })),
+  clearOutputLog: () => set({ outputLog: [] }),
 
   _past: [],
   _future: [],

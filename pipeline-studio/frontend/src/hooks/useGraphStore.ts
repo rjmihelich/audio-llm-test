@@ -26,6 +26,11 @@ interface GraphState {
   pipelineName: string
   isDirty: boolean
 
+  // Output log for sink nodes (text_output, etc.)
+  outputLog: string[]
+  appendOutputLog: (text: string) => void
+  clearOutputLog: () => void
+
   // History
   _past: Snapshot[]
   _future: Snapshot[]
@@ -43,6 +48,7 @@ interface GraphState {
   onConnect: OnConnect
   addNode: (node: Node) => void
   removeNode: (id: string) => void
+  removeEdges: (ids: string[]) => void
   updateNodeConfig: (nodeId: string, config: Record<string, unknown>) => void
   selectNode: (id: string | null) => void
   duplicateSelected: () => void
@@ -60,6 +66,12 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   pipelineId: null,
   pipelineName: 'Untitled Pipeline',
   isDirty: false,
+
+  outputLog: [],
+  appendOutputLog: (text) => set((s) => ({
+    outputLog: [...s.outputLog.slice(-199), text],
+  })),
+  clearOutputLog: () => set({ outputLog: [] }),
 
   _past: [],
   _future: [],
@@ -177,6 +189,15 @@ export const useGraphStore = create<GraphState>((set, get) => ({
       nodes: s.nodes.filter((n) => n.id !== id),
       edges: s.edges.filter((e) => e.source !== id && e.target !== id),
       selectedNodeId: s.selectedNodeId === id ? null : s.selectedNodeId,
+      isDirty: true,
+    }))
+  },
+
+  removeEdges: (ids) => {
+    get()._pushHistory()
+    const idSet = new Set(ids)
+    set((s) => ({
+      edges: s.edges.filter((e) => !idSet.has(e.id)),
       isDirty: true,
     }))
   },

@@ -1,6 +1,6 @@
 /** Right panel — configuration for the selected node */
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useGraphStore } from '../hooks/useGraphStore'
 import type { NodeTypeRegistry, ConfigFieldDef } from '../api/client'
 
@@ -78,6 +78,11 @@ export default function ConfigPanel({ registry }: ConfigPanelProps) {
         {/* Preview / Play button for source nodes */}
         {(typeId === 'speech_source' || typeId === 'far_end_source' || typeId === 'noise_generator') && (
           <PreviewButton nodeId={selectedNodeId} config={config} typeId={typeId} />
+        )}
+
+        {/* Running output log for text_output nodes */}
+        {typeId === 'text_output' && (
+          <OutputLog />
         )}
       </div>
 
@@ -217,6 +222,53 @@ function FieldRenderer({
     default:
       return null
   }
+}
+
+function OutputLog() {
+  const outputLog = useGraphStore((s) => s.outputLog)
+  const clearOutputLog = useGraphStore((s) => s.clearOutputLog)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Auto-scroll to bottom when new entries arrive
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [outputLog.length])
+
+  return (
+    <div className="pt-2 border-t border-gray-100">
+      <div className="flex items-center justify-between mb-1">
+        <label className="text-[10px] font-medium text-gray-500">Output Log</label>
+        {outputLog.length > 0 && (
+          <button
+            onClick={clearOutputLog}
+            className="text-[9px] text-gray-400 hover:text-red-500"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      <div
+        ref={scrollRef}
+        className="bg-gray-50 border border-gray-200 rounded p-2 text-xs font-mono max-h-[300px] min-h-[80px] overflow-y-auto whitespace-pre-wrap"
+      >
+        {outputLog.length === 0 ? (
+          <span className="text-gray-300 italic text-[10px]">Press Play to see output...</span>
+        ) : (
+          outputLog.map((entry, i) => (
+            <div key={i} className="pb-1 mb-1 border-b border-gray-100 last:border-0 last:mb-0 last:pb-0">
+              <span className="text-[9px] text-gray-300 mr-1">#{i + 1}</span>
+              <span className="text-gray-700">{entry}</span>
+            </div>
+          ))
+        )}
+      </div>
+      {outputLog.length > 0 && (
+        <p className="text-[9px] text-gray-300 mt-1">{outputLog.length} entries</p>
+      )}
+    </div>
+  )
 }
 
 function PreviewButton({ nodeId, config, typeId }: { nodeId: string; config: Record<string, unknown>; typeId: string }) {

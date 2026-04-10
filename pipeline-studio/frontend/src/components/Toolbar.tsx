@@ -159,6 +159,12 @@ export default function Toolbar({ registry }: ToolbarProps) {
       setNowPlaying(result.source_text || null)
       setIterationCount((c) => c + 1)
 
+      // Push text results to output log for text_output sidebar
+      const textOut = result.transcription_text || result.llm_response_text || result.source_text
+      if (textOut) {
+        useGraphStore.getState().appendOutputLog(textOut)
+      }
+
       if (result.audio_wav_base64) {
         setTransport('playing')
         return new Promise<boolean>((resolve) => {
@@ -192,6 +198,7 @@ export default function Toolbar({ registry }: ToolbarProps) {
     stopRequestedRef.current = false
     setLastError(null)
     setIterationCount(0)
+    useGraphStore.getState().clearOutputLog()
     setTransport('loading')
 
     // Continuous playback loop

@@ -1,5 +1,6 @@
 /** Right panel — configuration for the selected node */
 
+import { useState, useCallback, useEffect, useRef } from 'react'
 import { useGraphStore } from '../hooks/useGraphStore'
 import type { NodeTypeRegistry, ConfigFieldDef } from '../api/client'
 
@@ -73,6 +74,16 @@ export default function ConfigPanel({ registry }: ConfigPanelProps) {
             onChange={(v) => handleChange(field.name, v)}
           />
         ))}
+
+        {/* Preview / Play button for source nodes */}
+        {(typeId === 'speech_source' || typeId === 'far_end_source' || typeId === 'noise_generator') && (
+          <PreviewButton nodeId={selectedNodeId} config={config} typeId={typeId} />
+        )}
+
+        {/* Running output log for text_output nodes */}
+        {typeId === 'text_output' && (
+          <OutputLog />
+        )}
       </div>
 
       {/* Node ID */}
@@ -211,4 +222,110 @@ function FieldRenderer({
     default:
       return null
   }
+}
+
+function OutputLog() {
+  const outputLog = useGraphStore((s) => s.outputLog)
+  const clearOutputLog = useGraphStore((s) => s.clearOutputLog)
+  const scrollRef = useRef<HTMLDivElement>(null)
+
+  // Auto-scroll to bottom when new entries arrive
+  useEffect(() => {
+    if (scrollRef.current) {
+      scrollRef.current.scrollTop = scrollRef.current.scrollHeight
+    }
+  }, [outputLog.length])
+
+  return (
+    <div className="pt-2 border-t border-gray-100">
+      <div className="flex items-center justify-between mb-1">
+        <label className="text-[10px] font-medium text-gray-500">Output Log</label>
+        {outputLog.length > 0 && (
+          <button
+            onClick={clearOutputLog}
+            className="text-[9px] text-gray-400 hover:text-red-500"
+          >
+            Clear
+          </button>
+        )}
+      </div>
+      <div
+        ref={scrollRef}
+        className="bg-gray-50 border border-gray-200 rounded p-2 text-xs font-mono max-h-[300px] min-h-[80px] overflow-y-auto whitespace-pre-wrap"
+      >
+        {outputLog.length === 0 ? (
+          <span className="text-gray-300 italic text-[10px]">Press Play to see output...</span>
+        ) : (
+          outputLog.map((entry, i) => (
+            <div key={i} className="pb-1 mb-1 border-b border-gray-100 last:border-0 last:mb-0 last:pb-0">
+              <span className="text-[9px] text-gray-300 mr-1">#{i + 1}</span>
+              <span className="text-gray-700">{entry}</span>
+            </div>
+          ))
+        )}
+      </div>
+      {outputLog.length > 0 && (
+        <p className="text-[9px] text-gray-300 mt-1">{outputLog.length} entries</p>
+      )}
+    </div>
+  )
+}
+
+function PreviewButton({ nodeId, config, typeId }: { nodeId: string; config: Record<string, unknown>; typeId: string }) {
+  const [playing, setPlaying] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handlePreview = useCallback(async () => {
+    setPlaying(true)
+    setError(null)
+    try {
+      const resp = await fetch('/api/pipelines/preview-node', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ node_id: nodeId, type_id: typeId, config }),
+      })
+      if (!resp.ok) {
+        const msg = await resp.text()
+        throw new Error(msg || `HTTP ${resp.status}`)
+      }
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      audio.onended = () => { setPlaying(false); URL.revokeObjectURL(url) }
+      audio.onerror = () => { setPlaying(false); setError('Playback failed'); URL.revokeObjectURL(url) }
+      await audio.play()
+    } catch (e) {
+      setPlaying(false)
+      setError(e instanceof Error ? e.message : 'Preview failed')
+    }
+  }, [nodeId, typeId, config])
+
+  return (
+    <div className="pt-2 border-t border-gray-100">
+      <button
+        onClick={handlePreview}
+        disabled={playing}
+        className={`w-full flex items-center justify-center gap-2 px-3 py-2 rounded text-xs font-medium transition-colors ${
+          playing
+            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+            : 'bg-slate-700 text-white hover:bg-slate-600'
+        }`}
+      >
+        {playing ? (
+          <>
+            <span className="inline-block w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
+            Playing...
+          </>
+        ) : (
+          <>
+            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+            </svg>
+            Preview
+          </>
+        )}
+      </button>
+      {error && <p className="text-[9px] text-red-500 mt-1">{error}</p>}
+    </div>
+  )
 }
