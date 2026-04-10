@@ -117,9 +117,12 @@ export default function ConfigPanel({ registry }: ConfigPanelProps) {
           <OutputLog nodeId={selectedNodeId} />
         )}
 
-        {/* Histogram display */}
+        {/* Histogram display + popup toggle */}
         {typeId === 'histogram' && (
-          <HistogramDisplay nodeId={selectedNodeId} config={config} />
+          <>
+            <HistogramDisplay nodeId={selectedNodeId} config={config} />
+            <HistogramPopupButton nodeId={selectedNodeId} />
+          </>
         )}
       </div>
 
@@ -420,6 +423,30 @@ function HistogramDisplay({ nodeId, config }: { nodeId: string; config: Record<s
           <p className="text-[9px] text-gray-300 mt-1">{total} samples</p>
         </div>
       )}
+    </div>
+  )
+}
+
+function HistogramPopupButton({ nodeId }: { nodeId: string }) {
+  const isOpen = useGraphStore((s) => s.openHistograms.includes(nodeId))
+  const toggleHistogram = useGraphStore((s) => s.toggleHistogram)
+
+  return (
+    <div className="pt-1">
+      <button
+        onClick={() => toggleHistogram(nodeId)}
+        className={`w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded text-xs font-medium transition-colors ${
+          isOpen
+            ? 'bg-blue-50 text-blue-600 border border-blue-200 hover:bg-blue-100'
+            : 'bg-gray-100 text-gray-600 border border-gray-200 hover:bg-gray-200'
+        }`}
+      >
+        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+        </svg>
+        {isOpen ? 'Close Popup' : 'Open Popup'}
+      </button>
+      <p className="text-[9px] text-gray-300 mt-0.5 text-center">or double-click the node</p>
     </div>
   )
 }

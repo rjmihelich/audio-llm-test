@@ -4,8 +4,9 @@
     {
       "name": "frontend",
       "runtimeExecutable": "/bin/sh",
-      "runtimeArgs": ["-c", "cd frontend && PATH=/opt/homebrew/bin:$PATH VITE_API_TARGET=http://localhost:8001 npx vite --host 0.0.0.0 --port 5173"],
-      "port": 5173
+      "runtimeArgs": ["-c", "cd frontend && PATH=/opt/homebrew/bin:$PATH VITE_API_TARGET=http://localhost:8001 npx vite --host 0.0.0.0 --port $PORT"],
+      "port": 5173,
+      "autoPort": true
     },
     {
       "name": "pipeline-studio",

@@ -27,7 +27,7 @@ export default function Canvas({ registry }: CanvasProps) {
   const {
     nodes, edges,
     onNodesChange, onEdgesChange, onConnect,
-    addNode, selectNode, removeEdges,
+    addNode, selectNode, removeEdges, toggleHistogram,
   } = useGraphStore()
 
   const reactFlowRef = useRef<ReactFlowInstance | null>(null)
@@ -120,6 +120,12 @@ export default function Canvas({ registry }: CanvasProps) {
         onConnect={onConnect}
         onInit={(instance) => { reactFlowRef.current = instance }}
         onNodeClick={(_event, node) => selectNode(node.id)}
+        onNodeDoubleClick={(_event, node) => {
+          const d = node.data as Record<string, unknown>
+          if (d.type_id === 'histogram') {
+            toggleHistogram(node.id)
+          }
+        }}
         onPaneClick={() => selectNode(null)}
         nodeTypes={nodeTypes}
         edgeTypes={edgeTypes}

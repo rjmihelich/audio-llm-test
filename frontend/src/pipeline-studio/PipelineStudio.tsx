@@ -7,10 +7,13 @@ import Canvas from './components/Canvas'
 import NodePalette from './components/NodePalette'
 import ConfigPanel from './components/ConfigPanel'
 import Toolbar from './components/Toolbar'
+import HistogramPopup from './components/HistogramPopup'
 import { useNodeTypes } from './hooks/usePipelineApi'
+import { useGraphStore } from './hooks/useGraphStore'
 
 export default function PipelineStudio() {
   const { data: registry, isLoading } = useNodeTypes()
+  const openHistograms = useGraphStore((s) => s.openHistograms)
 
   return (
     <ReactFlowProvider>
@@ -29,6 +32,11 @@ export default function PipelineStudio() {
           {/* Right: config panel */}
           <ConfigPanel registry={registry} />
         </div>
+
+        {/* Floating histogram popups */}
+        {openHistograms.map((nodeId) => (
+          <HistogramPopup key={nodeId} nodeId={nodeId} />
+        ))}
       </div>
     </ReactFlowProvider>
   )
