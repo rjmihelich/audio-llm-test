@@ -3,6 +3,7 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { PORT_COLORS, type PortType } from '../utils/portTypes'
 import type { NodeTypeDef, PortDef } from '../api/client'
+import { useGraphStore } from '../hooks/useGraphStore'
 
 interface BaseNodeData {
   type_id: string
@@ -14,6 +15,9 @@ interface BaseNodeData {
 export default function BaseNode({ data, selected, id }: NodeProps) {
   const d = data as unknown as BaseNodeData
   const nodeDef = d.nodeDef
+  const modelStatus = useGraphStore((s) =>
+    (d.type_id === 'llm' || d.type_id === 'llm_realtime') ? s.modelStatus[id] : undefined
+  )
 
   if (!nodeDef) {
     return (
@@ -63,10 +67,27 @@ export default function BaseNode({ data, selected, id }: NodeProps) {
           <div className="text-gray-700 font-medium">{String(d.config?.noise_type || 'pink_lpf')}</div>
         )}
         {d.type_id === 'mixer' && (
-          <div className="text-gray-700 font-medium">SNR: {String(d.config?.snr_db ?? 20)} dB</div>
+          <div className="text-gray-700 font-medium">Master: {String(d.config?.master_gain_db ?? 0)} dB</div>
         )}
         {d.type_id === 'llm' && (
-          <div className="text-gray-700 font-medium truncate max-w-[130px]">{String(d.config?.backend || '')}</div>
+          <>
+            <div className="text-gray-700 font-medium truncate max-w-[130px]">{String(d.config?.backend || '')}</div>
+            {modelStatus?.status === 'loading' && (
+              <div className="flex items-center gap-1 mt-0.5">
+                <span className="inline-block w-2 h-2 border border-amber-400 border-t-transparent rounded-full animate-spin" />
+                <span className="text-[9px] text-amber-600">Loading...</span>
+              </div>
+            )}
+            {modelStatus?.status === 'ready' && modelStatus.model && (
+              <div className="flex items-center gap-1 mt-0.5">
+                <span className="text-[9px] text-emerald-500">&#10003;</span>
+                <span className="text-[9px] text-emerald-600">{modelStatus.model}</span>
+              </div>
+            )}
+            {modelStatus?.status === 'error' && (
+              <div className="text-[9px] text-red-500 mt-0.5 truncate max-w-[130px]">Error loading</div>
+            )}
+          </>
         )}
         {d.type_id === 'llm_realtime' && (
           <div className="text-gray-700 font-medium">{String(d.config?.model || 'gpt-4o-realtime')}</div>

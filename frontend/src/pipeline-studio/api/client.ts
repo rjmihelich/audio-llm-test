@@ -142,3 +142,19 @@ export async function executeInline(graphJson: Record<string, unknown>): Promise
     body: JSON.stringify({ graph_json: graphJson }),
   }))
 }
+
+export interface WarmupResult {
+  status: 'ready' | 'error'
+  model: string
+  load_time_ms?: number
+  error?: string
+  message?: string
+}
+
+export async function warmupModel(backend: string): Promise<WarmupResult> {
+  return json(await fetch(`${BASE}/warmup-model`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ backend }),
+  }))
+}

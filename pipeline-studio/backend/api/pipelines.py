@@ -546,3 +546,54 @@ async def execute_inline(
     """
     graph_json = body.get("graph_json", body)
     return await _execute_graph(graph_json, session)
+
+
+@router.post("/warmup-model")
+async def warmup_model(body: dict[str, Any]):
+    """Warm up an LLM model — forces loading into VRAM and returns timing.
+
+    POST {"backend": "ollama:llama3.1"}
+    Returns {"status": "ready", "model": "llama3.1:8b", "load_time_ms": 1234}
+    """
+    import time
+
+    backend_str = body.get("backend", "")
+    if not backend_str:
+        raise HTTPException(400, "Missing 'backend' field")
+
+    provider, _, model = backend_str.partition(":")
+    if not provider or not model:
+        raise HTTPException(400, f"Invalid backend format: {backend_str!r} — expected 'provider:model'")
+
+    # Only Ollama needs warming (loads model into VRAM)
+    if provider != "ollama":
+        return {"status": "ready", "model": model, "load_time_ms": 0, "message": "Cloud provider — no warmup needed"}
+
+    try:
+        from backend.app.config import settings
+        from backend.app.llm.ollama import OllamaBackend
+
+        t0 = time.monotonic()
+        backend = OllamaBackend(base_url=settings.ollama_base_url, model=model)
+
+        # Resolve model name (e.g. llama3.1 → llama3.1:8b)
+        await backend._resolve_model()
+        resolved_model = backend._model
+
+        # Tiny generate to force model loading into VRAM
+        resp = await backend.query_with_text("Hi", "Reply with one word.")
+        load_time_ms = (time.monotonic() - t0) * 1000
+
+        await backend.close()
+
+        return {
+            "status": "ready",
+            "model": resolved_model,
+            "load_time_ms": round(load_time_ms),
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "model": model,
+            "error": str(e),
+        }

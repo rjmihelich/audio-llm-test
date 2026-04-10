@@ -18,6 +18,13 @@ interface Snapshot {
   edges: Edge[]
 }
 
+export interface ModelStatus {
+  status: 'loading' | 'ready' | 'error'
+  model?: string
+  loadTimeMs?: number
+  error?: string
+}
+
 interface GraphState {
   nodes: Node[]
   edges: Edge[]
@@ -30,6 +37,11 @@ interface GraphState {
   outputLog: string[]
   appendOutputLog: (text: string) => void
   clearOutputLog: () => void
+
+  // Model warmup status per node ID
+  modelStatus: Record<string, ModelStatus>
+  setModelStatus: (nodeId: string, status: ModelStatus) => void
+  clearModelStatus: (nodeId: string) => void
 
   // History
   _past: Snapshot[]
@@ -72,6 +84,15 @@ export const useGraphStore = create<GraphState>((set, get) => ({
     outputLog: [...s.outputLog.slice(-199), text],
   })),
   clearOutputLog: () => set({ outputLog: [] }),
+
+  modelStatus: {},
+  setModelStatus: (nodeId, status) => set((s) => ({
+    modelStatus: { ...s.modelStatus, [nodeId]: status },
+  })),
+  clearModelStatus: (nodeId) => set((s) => {
+    const { [nodeId]: _, ...rest } = s.modelStatus
+    return { modelStatus: rest }
+  }),
 
   _past: [],
   _future: [],

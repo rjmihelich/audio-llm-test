@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { useGraphStore } from '../hooks/useGraphStore'
 import type { NodeTypeRegistry, ConfigFieldDef } from '../api/client'
+import { warmupModel } from '../api/client'
 
 interface ConfigPanelProps {
   registry: NodeTypeRegistry | undefined
@@ -31,6 +32,32 @@ export default function ConfigPanel({ registry }: ConfigPanelProps) {
 
   const handleChange = (fieldName: string, value: unknown) => {
     updateNodeConfig(selectedNodeId, { [fieldName]: value })
+
+    // Trigger model warmup when LLM backend changes
+    if (fieldName === 'backend' && (typeId === 'llm' || typeId === 'llm_realtime') && typeof value === 'string' && value) {
+      const { setModelStatus } = useGraphStore.getState()
+      setModelStatus(selectedNodeId, { status: 'loading' })
+      warmupModel(value).then((result) => {
+        if (result.status === 'ready') {
+          setModelStatus(selectedNodeId, {
+            status: 'ready',
+            model: result.model,
+            loadTimeMs: result.load_time_ms,
+          })
+        } else {
+          setModelStatus(selectedNodeId, {
+            status: 'error',
+            model: result.model,
+            error: result.error,
+          })
+        }
+      }).catch((err) => {
+        setModelStatus(selectedNodeId, {
+          status: 'error',
+          error: err.message,
+        })
+      })
+    }
   }
 
   return (
@@ -74,6 +101,11 @@ export default function ConfigPanel({ registry }: ConfigPanelProps) {
             onChange={(v) => handleChange(field.name, v)}
           />
         ))}
+
+        {/* Model warmup status for LLM nodes */}
+        {(typeId === 'llm' || typeId === 'llm_realtime') && (
+          <ModelStatusIndicator nodeId={selectedNodeId} />
+        )}
 
         {/* Preview / Play button for source nodes */}
         {(typeId === 'speech_source' || typeId === 'far_end_source' || typeId === 'noise_generator') && (
@@ -222,6 +254,45 @@ function FieldRenderer({
     default:
       return null
   }
+}
+
+function ModelStatusIndicator({ nodeId }: { nodeId: string }) {
+  const status = useGraphStore((s) => s.modelStatus[nodeId])
+
+  if (!status) return null
+
+  return (
+    <div className="pt-2 border-t border-gray-100">
+      <label className="text-[10px] font-medium text-gray-500 block mb-1">Model Status</label>
+      {status.status === 'loading' && (
+        <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+          <span className="inline-block w-3 h-3 border-2 border-amber-400 border-t-transparent rounded-full animate-spin" />
+          <span>Loading model...</span>
+        </div>
+      )}
+      {status.status === 'ready' && (
+        <div className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1.5">
+          <div className="flex items-center gap-1.5">
+            <span className="text-emerald-500">&#10003;</span>
+            <span className="font-medium">{status.model}</span>
+          </div>
+          {status.loadTimeMs !== undefined && status.loadTimeMs > 0 && (
+            <div className="text-[10px] text-emerald-600 mt-0.5">
+              Loaded in {status.loadTimeMs >= 1000
+                ? `${(status.loadTimeMs / 1000).toFixed(1)}s`
+                : `${status.loadTimeMs}ms`}
+            </div>
+          )}
+        </div>
+      )}
+      {status.status === 'error' && (
+        <div className="text-xs text-red-600 bg-red-50 border border-red-200 rounded px-2 py-1.5">
+          <div className="font-medium">Failed to load</div>
+          <div className="text-[10px] text-red-500 mt-0.5 break-all">{status.error}</div>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function OutputLog() {
