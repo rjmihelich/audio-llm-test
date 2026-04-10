@@ -49,20 +49,20 @@ export default function HistogramPopup({ nodeId }: HistogramPopupProps) {
     : {}
   const mode = String(config.mode || 'binary')
 
-  // Draggable state
-  const [pos, setPos] = useState({ x: 100, y: 100 })
-  const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null)
+  // Draggable state — persisted in store so positions survive save/load
+  const savedPos = useGraphStore((s) => s.histogramPositions?.[nodeId])
+  const setHistogramPosition = useGraphStore((s) => s.setHistogramPosition)
+  const [pos, setPos] = useState(() => {
+    if (savedPos) return savedPos
+    // Stagger position based on how many are open, and persist it
+    const idx = useGraphStore.getState().openHistograms.indexOf(nodeId)
+    const initial = { x: 120 + Math.max(idx, 0) * 30, y: 100 + Math.max(idx, 0) * 30 }
+    // Defer store update to avoid set-during-render
+    setTimeout(() => useGraphStore.getState().setHistogramPosition(nodeId, initial), 0)
+    return initial
+  })
+  const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number; _lastPos?: { x: number; y: number } } | null>(null)
   const popupRef = useRef<HTMLDivElement>(null)
-
-  // Stagger position based on how many are open (set once on mount)
-  useEffect(() => {
-    const openHistograms = useGraphStore.getState().openHistograms
-    const idx = openHistograms.indexOf(nodeId)
-    if (idx >= 0) {
-      setPos({ x: 120 + idx * 30, y: 100 + idx * 30 })
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -75,13 +75,21 @@ export default function HistogramPopup({ nodeId }: HistogramPopupProps) {
 
     const handleMouseMove = (ev: MouseEvent) => {
       if (!dragRef.current) return
-      setPos({
+      const newPos = {
         x: dragRef.current.origX + (ev.clientX - dragRef.current.startX),
         y: dragRef.current.origY + (ev.clientY - dragRef.current.startY),
-      })
+      }
+      setPos(newPos)
+      // Store ref to latest position for mouseUp
+      dragRef.current._lastPos = newPos
     }
 
     const handleMouseUp = () => {
+      // Persist final position to store for save/load
+      const finalPos = dragRef.current?._lastPos
+      if (finalPos) {
+        setHistogramPosition(nodeId, finalPos)
+      }
       dragRef.current = null
       window.removeEventListener('mousemove', handleMouseMove)
       window.removeEventListener('mouseup', handleMouseUp)
@@ -89,7 +97,7 @@ export default function HistogramPopup({ nodeId }: HistogramPopupProps) {
 
     window.addEventListener('mousemove', handleMouseMove)
     window.addEventListener('mouseup', handleMouseUp)
-  }, [pos])
+  }, [pos, nodeId, setHistogramPosition])
 
   // Aggregate into proper buckets
   const total = data.length

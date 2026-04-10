@@ -82,7 +82,7 @@ export default function Toolbar({ registry }: ToolbarProps) {
 
   // Serialize graph for API — reads fresh from store each call
   const buildGraphJson = useCallback(() => {
-    const { nodes: currentNodes, edges: currentEdges } = useGraphStore.getState()
+    const { nodes: currentNodes, edges: currentEdges, openHistograms, histogramPositions } = useGraphStore.getState()
     return {
       nodes: currentNodes.map((n) => {
         const { nodeDef, ...rest } = n.data as Record<string, unknown>
@@ -102,6 +102,10 @@ export default function Toolbar({ registry }: ToolbarProps) {
         data: e.data || { edge_type: 'normal' },
       })),
       viewport: { x: 0, y: 0, zoom: 1 },
+      histogramPopups: {
+        open: openHistograms,
+        positions: histogramPositions,
+      },
     }
   }, [])
 
@@ -301,7 +305,7 @@ export default function Toolbar({ registry }: ToolbarProps) {
   const loadPipeline = (pipeline: PipelineData) => {
     if (transport !== 'stopped') handleStop()
     if (isDirty && !confirm('Discard unsaved changes?')) return
-    const graph = pipeline.graph_json as { nodes?: unknown[]; edges?: unknown[] }
+    const graph = pipeline.graph_json as { nodes?: unknown[]; edges?: unknown[]; histogramPopups?: { open?: string[]; positions?: Record<string, { x: number; y: number }> } }
     const loadedNodes = (graph.nodes || []).map((n: any) => {
       const typeId = n.type || n.data?.type_id || ''
       const nodeDef = registry?.node_types[typeId]
@@ -312,6 +316,11 @@ export default function Toolbar({ registry }: ToolbarProps) {
       id: e.id || `e_${Math.random().toString(36).slice(2, 8)}`,
     }))
     setPipeline(pipeline.id, pipeline.name, loadedNodes, loadedEdges)
+    // Restore histogram popup state
+    const hp = graph.histogramPopups
+    if (hp) {
+      useGraphStore.getState().setHistogramLayout(hp.open || [], hp.positions || {})
+    }
     setName(pipeline.name)
     setShowOpenDialog(false)
     setTimeout(() => reactFlow.fitView({ padding: 0.15, duration: 300 }), 50)

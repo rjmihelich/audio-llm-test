@@ -49,10 +49,13 @@ interface GraphState {
   clearHistogramData: (nodeId: string) => void
   clearAllLiveState: () => void
 
-  // Floating histogram popups (node IDs that are open)
+  // Floating histogram popups (node IDs that are open + positions)
   openHistograms: string[]
+  histogramPositions: Record<string, { x: number; y: number }>
   toggleHistogram: (nodeId: string) => void
   closeHistogram: (nodeId: string) => void
+  setHistogramPosition: (nodeId: string, pos: { x: number; y: number }) => void
+  setHistogramLayout: (open: string[], positions: Record<string, { x: number; y: number }>) => void
 
   // Model warmup status per node ID
   modelStatus: Record<string, ModelStatus>
@@ -130,6 +133,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   }),
 
   openHistograms: [],
+  histogramPositions: {},
   toggleHistogram: (nodeId) => set((s) => ({
     openHistograms: s.openHistograms.includes(nodeId)
       ? s.openHistograms.filter((id) => id !== nodeId)
@@ -138,6 +142,13 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   closeHistogram: (nodeId) => set((s) => ({
     openHistograms: s.openHistograms.filter((id) => id !== nodeId),
   })),
+  setHistogramPosition: (nodeId, pos) => set((s) => ({
+    histogramPositions: { ...s.histogramPositions, [nodeId]: pos },
+  })),
+  setHistogramLayout: (open, positions) => set({
+    openHistograms: open,
+    histogramPositions: positions,
+  }),
 
   modelStatus: {},
   setModelStatus: (nodeId, status) => set((s) => ({
