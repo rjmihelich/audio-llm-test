@@ -95,7 +95,8 @@ async def execute_eval_analysis(
     if enable_latency:
         eval_output["latency"] = ctx.metadata.get("latency_ms", {})
 
-    return {"eval_out": eval_output}
+    # Binary text output: "0" = pass, "1" = fail
+    return {"eval_out": eval_output, "text_out": "0" if overall_passed else "1"}
 
 
 async def execute_text_output(

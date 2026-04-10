@@ -159,11 +159,30 @@ export default function Toolbar({ registry }: ToolbarProps) {
       setNowPlaying(result.source_text || null)
       setIterationCount((c) => c + 1)
 
-      // Push text results to output log for text_output sidebar
-      // Prefer text_output_text (what actually arrived at the Text Output node)
-      const textOut = result.text_output_text || result.transcription_text || result.llm_response_text || result.source_text
-      if (textOut) {
-        useGraphStore.getState().appendOutputLog(textOut)
+      const store = useGraphStore.getState()
+
+      // Push per-node text output logs
+      if (result.text_outputs && typeof result.text_outputs === 'object') {
+        for (const [nodeId, text] of Object.entries(result.text_outputs as Record<string, string>)) {
+          if (text) store.appendOutputLog(nodeId, text)
+        }
+      }
+
+      // Update router active states
+      if (result.router_states) {
+        store.setRouterStates(result.router_states as Record<string, number>)
+      }
+
+      // Update eval states
+      if (result.eval_states) {
+        store.setEvalStates(result.eval_states as Record<string, { passed: boolean; score: number }>)
+      }
+
+      // Accumulate histogram values
+      if (result.histogram_values && typeof result.histogram_values === 'object') {
+        for (const [nodeId, value] of Object.entries(result.histogram_values as Record<string, string>)) {
+          store.appendHistogramValue(nodeId, value)
+        }
       }
 
       if (result.audio_wav_base64) {
@@ -220,7 +239,7 @@ export default function Toolbar({ registry }: ToolbarProps) {
     stopRequestedRef.current = false
     setLastError(null)
     setIterationCount(0)
-    useGraphStore.getState().clearOutputLog()
+    useGraphStore.getState().clearAllLiveState()
     setTransport('loading')
 
     // Continuous playback loop

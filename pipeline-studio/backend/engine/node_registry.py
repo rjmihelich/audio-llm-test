@@ -809,7 +809,10 @@ def _build_registry() -> dict[str, NodeTypeDef]:
             PortDef("text_in", PortType.text, required=True, description="LLM response text"),
             PortDef("audio_in", PortType.audio, required=False, description="LLM response audio"),
         ],
-        outputs=[PortDef("eval_out", PortType.evaluation)],
+        outputs=[
+            PortDef("eval_out", PortType.evaluation),
+            PortDef("text_out", PortType.text, description="Binary: 0=pass, 1=fail"),
+        ],
         config_fields=[
             ConfigField("evaluators", "select", "Evaluators", "command_match",
                         options=[
@@ -848,7 +851,10 @@ def _build_registry() -> dict[str, NodeTypeDef]:
             PortDef("text_in", PortType.text, required=True, description="LLM response text to evaluate"),
             PortDef("audio_in", PortType.audio, required=False, description="Original audio (for context)"),
         ],
-        outputs=[PortDef("eval_out", PortType.evaluation)],
+        outputs=[
+            PortDef("eval_out", PortType.evaluation),
+            PortDef("text_out", PortType.text, description="Binary: 0=pass, 1=fail"),
+        ],
         config_fields=[
             ConfigField("judge_backend", "select", "Judge LLM", "openai:gpt-4o",
                         options=_judge_backend_options),
@@ -874,7 +880,10 @@ def _build_registry() -> dict[str, NodeTypeDef]:
             PortDef("text_in", PortType.text, required=True, description="LLM response text to evaluate"),
             PortDef("audio_in", PortType.audio, required=False, description="Original audio (for context)"),
         ],
-        outputs=[PortDef("eval_out", PortType.evaluation)],
+        outputs=[
+            PortDef("eval_out", PortType.evaluation),
+            PortDef("text_out", PortType.text, description="Binary: 0=pass, 1=fail"),
+        ],
         config_fields=[
             ConfigField("judge_backend", "select", "Judge LLM", "openai:gpt-4o",
                         options=_judge_backend_options),
@@ -897,7 +906,10 @@ def _build_registry() -> dict[str, NodeTypeDef]:
             PortDef("text_in", PortType.text, required=True, description="LLM response text to evaluate"),
             PortDef("audio_in", PortType.audio, required=False, description="Original audio (for context)"),
         ],
-        outputs=[PortDef("eval_out", PortType.evaluation)],
+        outputs=[
+            PortDef("eval_out", PortType.evaluation),
+            PortDef("text_out", PortType.text, description="Binary: 0=pass, 1=fail"),
+        ],
         config_fields=[
             ConfigField("judge_backend", "select", "Judge LLM", "openai:gpt-4o",
                         options=_judge_backend_options),
@@ -920,7 +932,10 @@ def _build_registry() -> dict[str, NodeTypeDef]:
             PortDef("text_in", PortType.text, required=True, description="LLM response text to evaluate"),
             PortDef("audio_in", PortType.audio, required=False, description="Original audio (for context)"),
         ],
-        outputs=[PortDef("eval_out", PortType.evaluation)],
+        outputs=[
+            PortDef("eval_out", PortType.evaluation),
+            PortDef("text_out", PortType.text, description="Binary: 0=pass, 1=fail"),
+        ],
         config_fields=[
             ConfigField("judge_backend", "select", "Judge LLM", "openai:gpt-4o",
                         options=_judge_backend_options),
@@ -964,6 +979,29 @@ def _build_registry() -> dict[str, NodeTypeDef]:
                         description="Route index when control is missing or invalid"),
             ConfigField("pass_silence", "boolean", "Pass Silence to Inactive", False,
                         description="Send silence/empty to non-selected routes (vs nothing)"),
+        ],
+        color="#67E8F9",
+    ))
+
+    nodes.append(NodeTypeDef(
+        type_id="histogram",
+        label="Histogram",
+        category="logic",
+        description="Real-time histogram of control signal / eval output values",
+        inputs=[
+            PortDef("value_in", PortType.text, required=True, description="Value to track (number or category)"),
+        ],
+        outputs=[],
+        config_fields=[
+            ConfigField("mode", "select", "Mode", "binary",
+                        options=[
+                            {"value": "binary", "label": "Binary (0/1 — Pass/Fail)"},
+                            {"value": "categorical", "label": "Categorical (0, 1, 2, ...)"},
+                            {"value": "numeric", "label": "Numeric (continuous)"},
+                        ],
+                        description="How to bucket incoming values"),
+            ConfigField("max_history", "number", "Max History", 100,
+                        description="Number of recent values to display"),
         ],
         color="#67E8F9",
     ))

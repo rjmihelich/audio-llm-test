@@ -33,10 +33,21 @@ interface GraphState {
   pipelineName: string
   isDirty: boolean
 
-  // Output log for sink nodes (text_output, etc.)
-  outputLog: string[]
-  appendOutputLog: (text: string) => void
-  clearOutputLog: () => void
+  // Per-node output logs (text_output nodes get their own log)
+  outputLogs: Record<string, string[]>
+  appendOutputLog: (nodeId: string, text: string) => void
+  clearOutputLog: (nodeId: string) => void
+  clearAllOutputLogs: () => void
+
+  // Per-node live state from pipeline execution
+  routerStates: Record<string, number>
+  evalStates: Record<string, { passed: boolean; score: number }>
+  histogramData: Record<string, string[]>
+  setRouterStates: (states: Record<string, number>) => void
+  setEvalStates: (states: Record<string, { passed: boolean; score: number }>) => void
+  appendHistogramValue: (nodeId: string, value: string) => void
+  clearHistogramData: (nodeId: string) => void
+  clearAllLiveState: () => void
 
   // Model warmup status per node ID
   modelStatus: Record<string, ModelStatus>
@@ -79,11 +90,39 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   pipelineName: 'Untitled Pipeline',
   isDirty: false,
 
-  outputLog: [],
-  appendOutputLog: (text) => set((s) => ({
-    outputLog: [...s.outputLog.slice(-199), text],
+  outputLogs: {},
+  appendOutputLog: (nodeId, text) => set((s) => ({
+    outputLogs: {
+      ...s.outputLogs,
+      [nodeId]: [...(s.outputLogs[nodeId] || []).slice(-199), text],
+    },
   })),
-  clearOutputLog: () => set({ outputLog: [] }),
+  clearOutputLog: (nodeId) => set((s) => {
+    const { [nodeId]: _, ...rest } = s.outputLogs
+    return { outputLogs: { ...rest, [nodeId]: [] } }
+  }),
+  clearAllOutputLogs: () => set({ outputLogs: {} }),
+
+  routerStates: {},
+  evalStates: {},
+  histogramData: {},
+  setRouterStates: (states) => set({ routerStates: states }),
+  setEvalStates: (states) => set({ evalStates: states }),
+  appendHistogramValue: (nodeId, value) => set((s) => ({
+    histogramData: {
+      ...s.histogramData,
+      [nodeId]: [...(s.histogramData[nodeId] || []).slice(-199), value],
+    },
+  })),
+  clearHistogramData: (nodeId) => set((s) => ({
+    histogramData: { ...s.histogramData, [nodeId]: [] },
+  })),
+  clearAllLiveState: () => set({
+    outputLogs: {},
+    routerStates: {},
+    evalStates: {},
+    histogramData: {},
+  }),
 
   modelStatus: {},
   setModelStatus: (nodeId, status) => set((s) => ({

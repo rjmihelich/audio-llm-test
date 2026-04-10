@@ -494,8 +494,12 @@ async def _execute_graph(
             )
             audio_wav_base64 = base64.b64encode(buf.getvalue()).decode("ascii")
 
-        # text_output sink text (most specific — what the user wired to Text Output)
+        # Per-node state for the frontend
+        text_outputs = getattr(pipeline_result, "_text_outputs", {})
         text_output_text = getattr(pipeline_result, "_text_output_text", None)
+        router_states = getattr(pipeline_result, "_router_states", {})
+        eval_states = getattr(pipeline_result, "_eval_states", {})
+        histogram_values = getattr(pipeline_result, "_histogram_values", {})
 
         return {
             "success": True,
@@ -507,6 +511,10 @@ async def _execute_graph(
             "llm_response_text": pipeline_result.llm_response.text if pipeline_result.llm_response else None,
             "transcription_text": pipeline_result.transcription.text if pipeline_result.transcription else None,
             "text_output_text": text_output_text,
+            "text_outputs": text_outputs,
+            "router_states": router_states,
+            "eval_states": eval_states,
+            "histogram_values": histogram_values,
             "audio_wav_base64": audio_wav_base64,
             "source_text": speech_text,
             "error": pipeline_result.error,

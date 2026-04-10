@@ -57,7 +57,9 @@ async def _run_content_safety_group(
         user_query=user_query,
     )
 
-    return {"eval_out": asdict(result)}
+    eval_dict = asdict(result)
+    # Binary text output: "0" = pass, "1" = fail
+    return {"eval_out": eval_dict, "text_out": "0" if result.passed else "1"}
 
 
 async def execute_safety_critical_eval(

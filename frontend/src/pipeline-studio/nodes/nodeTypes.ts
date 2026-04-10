@@ -34,6 +34,7 @@ const nodeTypes: Record<string, typeof BaseNode> = {
   trust_brand_eval: BaseNode,
   ux_quality_eval: BaseNode,
   router: BaseNode,
+  histogram: BaseNode,
   text_output: BaseNode,
   audio_output: BaseNode,
   eval_output: BaseNode,

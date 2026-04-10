@@ -36,7 +36,7 @@ async def execute_router(
     # Clamp to valid range
     route = max(0, min(route, num_routes - 1))
 
-    outputs: dict[str, Any] = {}
+    outputs: dict[str, Any] = {"_active_route": route}
 
     for i in range(num_routes):
         if i == route:
@@ -56,3 +56,11 @@ async def execute_router(
                 outputs[f"text_out_{i}"] = ""
 
     return outputs
+
+
+async def execute_histogram(
+    node: GraphNode, inputs: dict[str, Any], config: dict, ctx: ExecutionContext
+) -> dict[str, Any]:
+    """Histogram sink — captures the value for frontend accumulation."""
+    value = inputs.get("value_in", "")
+    return {"_value": str(value).strip()}

@@ -478,6 +478,12 @@ class GraphPipeline:
             total_latency_ms=(time.monotonic() - start_time) * 1000,
         )
 
+        # Per-node state dicts for the frontend
+        text_outputs: dict[str, str] = {}       # node_id → text
+        router_states: dict[str, int] = {}      # node_id → active route
+        eval_states: dict[str, dict] = {}       # node_id → {passed, score}
+        histogram_values: dict[str, str] = {}   # node_id → latest value
+
         # Walk outputs looking for known result types
         for node_id, node_outputs in outputs.items():
             if node_outputs.get("_timed_out") or node_outputs.get("_error"):
@@ -515,11 +521,9 @@ class GraphPipeline:
                 if isinstance(audio, AudioBuffer):
                     result.degraded_audio = audio
 
-            # Capture text_output sink nodes
+            # Capture ALL text_output sink nodes (per-node)
             if node.type_id == "text_output" and "_text" in node_outputs:
-                # Store in dedicated attribute for the API to return
-                if not hasattr(result, "_text_output_text"):
-                    result._text_output_text = node_outputs["_text"]
+                text_outputs[node_id] = node_outputs["_text"]
                 if not result.transcription:
                     from backend.app.llm.base import Transcription
                     result.transcription = Transcription(
@@ -527,6 +531,40 @@ class GraphPipeline:
                         language="en",
                         confidence=0.0,
                     )
+
+            # Capture router active route
+            if node.type_id == "router" and "_active_route" in node_outputs:
+                router_states[node_id] = node_outputs["_active_route"]
+
+            # Capture eval node results (eval_analysis + content safety evals)
+            if node.type_id in ("eval_analysis", "safety_critical_eval", "compliance_eval",
+                                "trust_brand_eval", "ux_quality_eval") and "eval_out" in node_outputs:
+                ev = node_outputs["eval_out"]
+                if isinstance(ev, dict):
+                    eval_states[node_id] = {
+                        "passed": bool(ev.get("passed", False)),
+                        "score": float(ev.get("score", 0.0)),
+                    }
+
+            # Capture eval_output sink nodes
+            if node.type_id == "eval_output" and "_eval" in node_outputs:
+                ev = node_outputs["_eval"]
+                if isinstance(ev, dict):
+                    eval_states[node_id] = {
+                        "passed": bool(ev.get("passed", False)),
+                        "score": float(ev.get("score", 0.0)),
+                    }
+
+            # Capture histogram values
+            if node.type_id == "histogram" and "_value" in node_outputs:
+                histogram_values[node_id] = node_outputs["_value"]
+
+        # Attach per-node data to result
+        result._histogram_values = histogram_values
+        result._text_outputs = text_outputs
+        result._text_output_text = next(iter(text_outputs.values()), None)
+        result._router_states = router_states
+        result._eval_states = eval_states
 
         return result
 

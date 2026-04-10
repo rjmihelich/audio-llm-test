@@ -112,9 +112,14 @@ export default function ConfigPanel({ registry }: ConfigPanelProps) {
           <PreviewButton nodeId={selectedNodeId} config={config} typeId={typeId} />
         )}
 
-        {/* Running output log for text_output nodes */}
+        {/* Running output log for text_output nodes — per-node */}
         {typeId === 'text_output' && (
-          <OutputLog />
+          <OutputLog nodeId={selectedNodeId} />
+        )}
+
+        {/* Histogram display */}
+        {typeId === 'histogram' && (
+          <HistogramDisplay nodeId={selectedNodeId} config={config} />
         )}
       </div>
 
@@ -295,12 +300,11 @@ function ModelStatusIndicator({ nodeId }: { nodeId: string }) {
   )
 }
 
-function OutputLog() {
-  const outputLog = useGraphStore((s) => s.outputLog)
+function OutputLog({ nodeId }: { nodeId: string }) {
+  const outputLog = useGraphStore((s) => s.outputLogs[nodeId] || [])
   const clearOutputLog = useGraphStore((s) => s.clearOutputLog)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Auto-scroll to bottom when new entries arrive
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
@@ -313,7 +317,7 @@ function OutputLog() {
         <label className="text-[10px] font-medium text-gray-500">Output Log</label>
         {outputLog.length > 0 && (
           <button
-            onClick={clearOutputLog}
+            onClick={() => clearOutputLog(nodeId)}
             className="text-[9px] text-gray-400 hover:text-red-500"
           >
             Clear
@@ -337,6 +341,84 @@ function OutputLog() {
       </div>
       {outputLog.length > 0 && (
         <p className="text-[9px] text-gray-300 mt-1">{outputLog.length} entries</p>
+      )}
+    </div>
+  )
+}
+
+function HistogramDisplay({ nodeId, config }: { nodeId: string; config: Record<string, unknown> }) {
+  const data = useGraphStore((s) => s.histogramData[nodeId] || [])
+  const clearData = useGraphStore((s) => s.clearHistogramData)
+  const mode = String(config.mode || 'binary')
+
+  // Compute bucket counts
+  const counts: Record<string, number> = {}
+  for (const v of data) {
+    const key = v || '(empty)'
+    counts[key] = (counts[key] || 0) + 1
+  }
+
+  // For binary mode, ensure both 0 and 1 are shown
+  if (mode === 'binary') {
+    if (!counts['0']) counts['0'] = 0
+    if (!counts['1']) counts['1'] = 0
+  }
+
+  const sortedKeys = Object.keys(counts).sort()
+  const maxCount = Math.max(1, ...Object.values(counts))
+  const total = data.length
+
+  const barColor = (key: string) => {
+    if (mode === 'binary') return key === '0' ? '#22C55E' : '#EF4444'
+    const colors = ['#3B82F6', '#22C55E', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#14B8A6', '#F97316']
+    const idx = sortedKeys.indexOf(key) % colors.length
+    return colors[idx]
+  }
+
+  const barLabel = (key: string) => {
+    if (mode === 'binary') return key === '0' ? 'Pass' : 'Fail'
+    return key
+  }
+
+  return (
+    <div className="pt-2 border-t border-gray-100">
+      <div className="flex items-center justify-between mb-1">
+        <label className="text-[10px] font-medium text-gray-500">Histogram</label>
+        {total > 0 && (
+          <button onClick={() => clearData(nodeId)} className="text-[9px] text-gray-400 hover:text-red-500">
+            Clear
+          </button>
+        )}
+      </div>
+      {total === 0 ? (
+        <div className="bg-gray-50 border border-gray-200 rounded p-2 min-h-[60px] flex items-center justify-center">
+          <span className="text-gray-300 italic text-[10px]">Press Play to collect data...</span>
+        </div>
+      ) : (
+        <div className="bg-gray-50 border border-gray-200 rounded p-2 space-y-1.5">
+          {sortedKeys.map((key) => {
+            const count = counts[key]
+            const pct = total > 0 ? (count / total) * 100 : 0
+            return (
+              <div key={key}>
+                <div className="flex items-center justify-between text-[10px] mb-0.5">
+                  <span className="font-medium text-gray-600">{barLabel(key)}</span>
+                  <span className="text-gray-400">{count} ({pct.toFixed(0)}%)</span>
+                </div>
+                <div className="h-4 bg-gray-200 rounded overflow-hidden">
+                  <div
+                    className="h-full rounded transition-all duration-300"
+                    style={{
+                      width: `${(count / maxCount) * 100}%`,
+                      backgroundColor: barColor(key),
+                    }}
+                  />
+                </div>
+              </div>
+            )
+          })}
+          <p className="text-[9px] text-gray-300 mt-1">{total} samples</p>
+        </div>
       )}
     </div>
   )

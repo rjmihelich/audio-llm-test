@@ -313,7 +313,7 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
         { name: 'aec_output', type: 'audio', required: false, description: 'AEC output signal' },
         { name: 'echo_ref', type: 'audio', required: false, description: 'Echo reference' },
       ],
-      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }],
+      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }, { name: 'text_out', type: 'text', required: false, description: 'Binary: 0=pass, 1=fail' }],
       config_fields: [
         { name: 'frame_ms', type: 'slider', label: 'Frame Size (ms)', default: 20, min: 10, max: 40, step: 5, description: '' },
         { name: 'vad_threshold_db', type: 'slider', label: 'VAD Threshold (dB)', default: -40, min: -60, max: -20, step: 1, description: '' },
@@ -343,7 +343,7 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
         { name: 'near_end_ref', type: 'audio', required: false, description: 'Clean near-end reference' },
         { name: 'far_end_ref', type: 'audio', required: false, description: 'Clean far-end reference' },
       ],
-      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }],
+      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }, { name: 'text_out', type: 'text', required: false, description: 'Binary: 0=pass, 1=fail' }],
       config_fields: [
         { name: 'modes', type: 'select', label: 'Evaluation Mode', default: 'auto', options: [{ value: 'auto', label: 'Auto-detect' }, { value: 'uplink_quality', label: 'Uplink Quality' }, { value: 'downlink_quality', label: 'Downlink Quality' }, { value: 'speaker_attribution', label: 'Speaker Attribution' }, { value: 'barge_in', label: 'Barge-in Detection' }, { value: 'conversational', label: 'Conversational Quality' }, { value: 'all', label: 'All Modes' }], description: '' },
         { name: 'judge_backend', type: 'select', label: 'Judge LLM', default: 'openai:gpt-4o-audio-preview', options: [{ value: 'openai:gpt-4o-audio-preview', label: 'GPT-4o Audio' }, { value: 'openai:gpt-4o-mini-audio-preview', label: 'GPT-4o Mini Audio' }, { value: 'gemini:gemini-2.0-flash', label: 'Gemini 2.0 Flash' }, { value: 'anthropic:claude-sonnet-4-6', label: 'Claude Sonnet' }], description: '' },
@@ -360,7 +360,7 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
         { name: 'text_in', type: 'text', required: true, description: 'LLM response text to evaluate' },
         { name: 'audio_in', type: 'audio', required: false, description: 'Original audio (for context)' },
       ],
-      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }],
+      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }, { name: 'text_out', type: 'text', required: false, description: 'Binary: 0=pass, 1=fail' }],
       config_fields: [
         { name: 'judge_backend', type: 'select', label: 'Judge LLM', default: 'openai:gpt-4o', options: [{ value: 'openai:gpt-4o', label: 'GPT-4o' }, { value: 'openai:gpt-4o-mini', label: 'GPT-4o Mini' }, { value: 'gemini:gemini-2.0-flash', label: 'Gemini 2.0 Flash' }, { value: 'anthropic:claude-sonnet-4-6', label: 'Claude Sonnet' }, { value: 'ollama:mistral', label: 'Ollama Mistral' }], description: '' },
         { name: 'pass_threshold', type: 'slider', label: 'Pass Threshold', default: 0.6, min: 0, max: 1, step: 0.05, description: 'Weighted average score threshold for pass' },
@@ -376,7 +376,7 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
         { name: 'text_in', type: 'text', required: true, description: 'LLM response text to evaluate' },
         { name: 'audio_in', type: 'audio', required: false, description: 'Original audio (for context)' },
       ],
-      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }],
+      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }, { name: 'text_out', type: 'text', required: false, description: 'Binary: 0=pass, 1=fail' }],
       config_fields: [
         { name: 'judge_backend', type: 'select', label: 'Judge LLM', default: 'openai:gpt-4o', options: [{ value: 'openai:gpt-4o', label: 'GPT-4o' }, { value: 'openai:gpt-4o-mini', label: 'GPT-4o Mini' }, { value: 'gemini:gemini-2.0-flash', label: 'Gemini 2.0 Flash' }, { value: 'anthropic:claude-sonnet-4-6', label: 'Claude Sonnet' }, { value: 'ollama:mistral', label: 'Ollama Mistral' }], description: '' },
         { name: 'pass_threshold', type: 'slider', label: 'Pass Threshold', default: 0.6, min: 0, max: 1, step: 0.05, description: '' },
@@ -392,7 +392,7 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
         { name: 'text_in', type: 'text', required: true, description: 'LLM response text to evaluate' },
         { name: 'audio_in', type: 'audio', required: false, description: 'Original audio (for context)' },
       ],
-      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }],
+      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }, { name: 'text_out', type: 'text', required: false, description: 'Binary: 0=pass, 1=fail' }],
       config_fields: [
         { name: 'judge_backend', type: 'select', label: 'Judge LLM', default: 'openai:gpt-4o', options: [{ value: 'openai:gpt-4o', label: 'GPT-4o' }, { value: 'openai:gpt-4o-mini', label: 'GPT-4o Mini' }, { value: 'gemini:gemini-2.0-flash', label: 'Gemini 2.0 Flash' }, { value: 'anthropic:claude-sonnet-4-6', label: 'Claude Sonnet' }, { value: 'ollama:mistral', label: 'Ollama Mistral' }], description: '' },
         { name: 'pass_threshold', type: 'slider', label: 'Pass Threshold', default: 0.6, min: 0, max: 1, step: 0.05, description: '' },
@@ -408,7 +408,7 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
         { name: 'text_in', type: 'text', required: true, description: 'LLM response text to evaluate' },
         { name: 'audio_in', type: 'audio', required: false, description: 'Original audio (for context)' },
       ],
-      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }],
+      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }, { name: 'text_out', type: 'text', required: false, description: 'Binary: 0=pass, 1=fail' }],
       config_fields: [
         { name: 'judge_backend', type: 'select', label: 'Judge LLM', default: 'openai:gpt-4o', options: [{ value: 'openai:gpt-4o', label: 'GPT-4o' }, { value: 'openai:gpt-4o-mini', label: 'GPT-4o Mini' }, { value: 'gemini:gemini-2.0-flash', label: 'Gemini 2.0 Flash' }, { value: 'anthropic:claude-sonnet-4-6', label: 'Claude Sonnet' }, { value: 'ollama:mistral', label: 'Ollama Mistral' }], description: '' },
         { name: 'pass_threshold', type: 'slider', label: 'Pass Threshold', default: 0.6, min: 0, max: 1, step: 0.05, description: '' },
@@ -424,7 +424,7 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
         { name: 'text_in', type: 'text', required: true, description: 'LLM response text' },
         { name: 'audio_in', type: 'audio', required: false, description: 'LLM response audio' },
       ],
-      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }],
+      outputs: [{ name: 'eval_out', type: 'evaluation', required: false, description: '' }, { name: 'text_out', type: 'text', required: false, description: 'Binary: 0=pass, 1=fail' }],
       config_fields: [
         { name: 'evaluators', type: 'select', label: 'Evaluators', default: 'command_match', options: [{ value: 'command_match', label: 'Command Match' }, { value: 'llm_judge', label: 'LLM Judge' }, { value: 'wer', label: 'WER' }, { value: 'all', label: 'All' }], description: '' },
         { name: 'pass_threshold', type: 'slider', label: 'Pass Threshold', default: 0.6, min: 0, max: 1, step: 0.05, description: '' },
@@ -447,6 +447,17 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
         { name: 'num_routes', type: 'slider', label: 'Number of Routes', default: 2, min: 2, max: 8, step: 1, description: 'How many output routes (2-8)' },
         { name: 'default_route', type: 'number', label: 'Default Route', default: 0, description: 'Route index when control is missing or invalid' },
         { name: 'pass_silence', type: 'boolean', label: 'Pass Silence to Inactive', default: false, description: 'Send silence/empty to non-selected routes (vs nothing)' },
+      ],
+    },
+    histogram: {
+      type_id: 'histogram', label: 'Histogram', category: 'logic', color: '#67E8F9',
+      description: 'Real-time histogram of control signal / eval output values',
+      dynamic_inputs: false,
+      inputs: [{ name: 'value_in', type: 'text', required: true, description: 'Value to track (number or category)' }],
+      outputs: [],
+      config_fields: [
+        { name: 'mode', type: 'select', label: 'Mode', default: 'binary', options: [{ value: 'binary', label: 'Binary (0/1 — Pass/Fail)' }, { value: 'categorical', label: 'Categorical (0, 1, 2, ...)' }, { value: 'numeric', label: 'Numeric (continuous)' }], description: 'How to bucket incoming values' },
+        { name: 'max_history', type: 'number', label: 'Max History', default: 100, description: 'Number of recent values to display' },
       ],
     },
     text_output: {
