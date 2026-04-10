@@ -16,14 +16,14 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
   node_types: {
     speech_source: {
       type_id: 'speech_source', label: 'Speech Source', category: 'sources', color: '#A3E635',
-      description: 'Clean speech audio from corpus, sample library, or file',
+      description: 'Plays corpus samples (random from category if none specified), pre-recorded samples, or files',
       dynamic_inputs: false,
       inputs: [],
       outputs: [{ name: 'audio_out', type: 'audio', required: false, description: '' }],
       config_fields: [
-        { name: 'source_mode', type: 'select', label: 'Source', default: 'pipeline_input', options: [{ value: 'pipeline_input', label: 'From Test Case' }, { value: 'corpus_entry', label: 'Corpus Entry (TTS)' }, { value: 'speech_sample', label: 'Pre-recorded Sample' }, { value: 'file', label: 'Audio File' }], description: '' },
-        { name: 'corpus_entry_id', type: 'string', label: 'Corpus Entry ID', default: '', description: 'UUID — browse at /corpus' },
-        { name: 'corpus_category', type: 'select', label: 'Corpus Category', default: '', options: [{ value: '', label: 'Any' }, { value: 'harvard_sentence', label: 'Harvard Sentences' }, { value: 'navigation', label: 'Navigation' }, { value: 'media', label: 'Media Control' }, { value: 'climate', label: 'Climate Control' }, { value: 'phone', label: 'Phone' }, { value: 'general', label: 'General' }, { value: 'direct_harm', label: 'Direct Harm (Adversarial)' }, { value: 'jailbreak', label: 'Jailbreak (Adversarial)' }], description: 'Filter corpus entries by category' },
+        { name: 'source_mode', type: 'select', label: 'Source', default: 'corpus_entry', options: [{ value: 'pipeline_input', label: 'From Test Case' }, { value: 'corpus_entry', label: 'Corpus Entry (TTS)' }, { value: 'speech_sample', label: 'Pre-recorded Sample' }, { value: 'file', label: 'Audio File' }], description: '' },
+        { name: 'corpus_category', type: 'select', label: 'Corpus Category', default: '', options: [{ value: '', label: 'Any (random)' }, { value: 'harvard_sentence', label: 'Harvard Sentences' }, { value: 'navigation', label: 'Navigation' }, { value: 'media', label: 'Media Control' }, { value: 'climate', label: 'Climate Control' }, { value: 'phone', label: 'Phone' }, { value: 'general', label: 'General' }, { value: 'direct_harm', label: 'Direct Harm (Adversarial)' }, { value: 'jailbreak', label: 'Jailbreak (Adversarial)' }], description: 'Random sample each run if no specific entry set' },
+        { name: 'corpus_entry_id', type: 'string', label: 'Specific Entry ID', default: '', description: 'Leave blank to randomize from category' },
         { name: 'speech_sample_id', type: 'string', label: 'Speech Sample ID', default: '', description: 'UUID of pre-recorded sample' },
         { name: 'voice_id', type: 'string', label: 'Voice ID', default: '', description: 'Voice for TTS synthesis' },
         { name: 'tts_provider', type: 'select', label: 'TTS Provider', default: 'edge', options: [{ value: 'edge', label: 'Edge (Free)' }, { value: 'openai', label: 'OpenAI' }, { value: 'google', label: 'Google' }, { value: 'elevenlabs', label: 'ElevenLabs' }, { value: 'piper', label: 'Piper (Local)' }, { value: 'azure', label: 'Azure' }], description: '' },
@@ -59,16 +59,21 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
     },
     mixer: {
       type_id: 'mixer', label: 'Audio Mixer', category: 'processing', color: '#FBBF24',
-      description: 'Mix N audio inputs at specified SNR levels',
+      description: 'Mix N audio inputs with per-channel gain and master output',
       dynamic_inputs: true,
       inputs: [
-        { name: 'audio_in_0', type: 'audio', required: true, description: 'Primary (speech)' },
-        { name: 'audio_in_1', type: 'audio', required: false, description: 'Noise 1' },
+        { name: 'audio_in_0', type: 'audio', required: true, description: 'Input 1' },
+        { name: 'audio_in_1', type: 'audio', required: false, description: 'Input 2' },
       ],
       outputs: [{ name: 'audio_out', type: 'audio', required: false, description: '' }],
       config_fields: [
-        { name: 'snr_db', type: 'slider', label: 'SNR (dB)', default: 20, min: -10, max: 40, step: 1, description: '' },
-        { name: 'mixing_mode', type: 'select', label: 'Mode', default: 'snr', options: [{ value: 'snr', label: 'SNR-calibrated' }, { value: 'equal', label: 'Equal gain' }], description: '' },
+        { name: 'gain_0_db', type: 'slider', label: 'Input 1 Gain (dB)', default: 0, min: -100, max: 10, step: 0.5, description: '' },
+        { name: 'gain_1_db', type: 'slider', label: 'Input 2 Gain (dB)', default: 0, min: -100, max: 10, step: 0.5, description: '' },
+        { name: 'gain_2_db', type: 'slider', label: 'Input 3 Gain (dB)', default: -100, min: -100, max: 10, step: 0.5, description: '' },
+        { name: 'gain_3_db', type: 'slider', label: 'Input 4 Gain (dB)', default: -100, min: -100, max: 10, step: 0.5, description: '' },
+        { name: 'gain_4_db', type: 'slider', label: 'Input 5 Gain (dB)', default: -100, min: -100, max: 10, step: 0.5, description: '' },
+        { name: 'gain_5_db', type: 'slider', label: 'Input 6 Gain (dB)', default: -100, min: -100, max: 10, step: 0.5, description: '' },
+        { name: 'master_gain_db', type: 'slider', label: 'Master Output (dB)', default: 0, min: -100, max: 10, step: 0.5, description: '' },
       ],
     },
     echo_simulator: {

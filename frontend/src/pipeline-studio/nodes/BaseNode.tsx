@@ -63,7 +63,7 @@ export default function BaseNode({ data, selected, id }: NodeProps) {
           <div className="text-gray-700 font-medium">{String(d.config?.noise_type || 'pink_lpf')}</div>
         )}
         {d.type_id === 'mixer' && (
-          <div className="text-gray-700 font-medium">SNR: {String(d.config?.snr_db ?? 20)} dB</div>
+          <div className="text-gray-700 font-medium">Master: {String(d.config?.master_gain_db ?? 0)} dB</div>
         )}
         {d.type_id === 'llm' && (
           <div className="text-gray-700 font-medium truncate max-w-[130px]">{String(d.config?.backend || '')}</div>

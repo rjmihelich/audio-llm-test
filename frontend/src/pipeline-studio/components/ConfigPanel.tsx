@@ -1,5 +1,6 @@
 /** Right panel — configuration for the selected node */
 
+import { useState, useCallback } from 'react'
 import { useGraphStore } from '../hooks/useGraphStore'
 import type { NodeTypeRegistry, ConfigFieldDef } from '../api/client'
 
@@ -73,6 +74,11 @@ export default function ConfigPanel({ registry }: ConfigPanelProps) {
             onChange={(v) => handleChange(field.name, v)}
           />
         ))}
+
+        {/* Preview / Play button for source nodes */}
+        {(typeId === 'speech_source' || typeId === 'far_end_source' || typeId === 'noise_generator') && (
+          <PreviewButton nodeId={selectedNodeId} config={config} typeId={typeId} />
+        )}
       </div>
 
       {/* Node ID */}
@@ -211,4 +217,63 @@ function FieldRenderer({
     default:
       return null
   }
+}
+
+function PreviewButton({ nodeId, config, typeId }: { nodeId: string; config: Record<string, unknown>; typeId: string }) {
+  const [playing, setPlaying] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handlePreview = useCallback(async () => {
+    setPlaying(true)
+    setError(null)
+    try {
+      const resp = await fetch('/api/pipelines/preview-node', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ node_id: nodeId, type_id: typeId, config }),
+      })
+      if (!resp.ok) {
+        const msg = await resp.text()
+        throw new Error(msg || `HTTP ${resp.status}`)
+      }
+      const blob = await resp.blob()
+      const url = URL.createObjectURL(blob)
+      const audio = new Audio(url)
+      audio.onended = () => { setPlaying(false); URL.revokeObjectURL(url) }
+      audio.onerror = () => { setPlaying(false); setError('Playback failed'); URL.revokeObjectURL(url) }
+      await audio.play()
+    } catch (e) {
+      setPlaying(false)
+      setError(e instanceof Error ? e.message : 'Preview failed')
+    }
+  }, [nodeId, typeId, config])
+
+  return (
+    <div className="pt-2 border-t border-gray-100">
+      <button
+        onClick={handlePreview}
+        disabled={playing}
+        className={`w-full flex items-center justify-center gap-2 px-3 py-2 rounded text-xs font-medium transition-colors ${
+          playing
+            ? 'bg-gray-100 text-gray-400 cursor-not-allowed'
+            : 'bg-slate-700 text-white hover:bg-slate-600'
+        }`}
+      >
+        {playing ? (
+          <>
+            <span className="inline-block w-3 h-3 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
+            Playing...
+          </>
+        ) : (
+          <>
+            <svg className="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+            </svg>
+            Preview
+          </>
+        )}
+      </button>
+      {error && <p className="text-[9px] text-red-500 mt-1">{error}</p>}
+    </div>
+  )
 }
