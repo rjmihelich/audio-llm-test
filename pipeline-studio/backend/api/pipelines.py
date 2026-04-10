@@ -270,58 +270,73 @@ async def preview_node(
             # corpus_entry mode (default) — pick text from corpus, synthesize
             category = config.get("corpus_category", "")
             entry_id = config.get("corpus_entry_id", "")
+            provider_name = config.get("tts_provider", "edge")
+            voice_id = config.get("voice_id", "")
 
-            # Get the text to speak
-            text: str | None = None
+            from backend.app.api.speech import _load_tts_provider
+            tts = _load_tts_provider(provider_name)
+            if tts is None:
+                raise HTTPException(500, f"TTS provider '{provider_name}' not available")
+
+            # Build voice lookup by language prefix for auto-matching
+            all_voices = await tts.list_voices()
+            voices_by_lang: dict[str, list] = {}
+            for v in all_voices:
+                lang_key = v.language.split("-")[0]  # "en-GB" → "en"
+                voices_by_lang.setdefault(lang_key, []).append(v)
+
+            # Map corpus language codes to Edge voice language prefixes
+            _LANG_VOICE_MAP = {
+                "en": "en", "de": "de", "fr": "fr", "es": "es",
+                "it": "it", "ja": "ja", "ko": "ko", "zh": "zh",
+                "pt": "pt", "ru": "ru", "ar": "ar", "hi": "hi",
+            }
+
+            async def _pick_entry(cat: str | None) -> CorpusEntry | None:
+                stmt = select(CorpusEntry)
+                if cat:
+                    stmt = stmt.where(CorpusEntry.category == cat)
+                return (await session.execute(
+                    stmt.order_by(func.random()).limit(1)
+                )).scalar_one_or_none()
+
+            async def _try_synthesize(entry: CorpusEntry) -> AudioBuffer | None:
+                """Try to synthesize an entry, matching voice to entry language."""
+                vid = voice_id  # user-specified voice takes priority
+                if not vid:
+                    lang = _LANG_VOICE_MAP.get(entry.language, "en")
+                    candidates = voices_by_lang.get(lang, voices_by_lang.get("en", []))
+                    vid = candidates[0].voice_id if candidates else "en-US-AriaNeural"
+                try:
+                    buf = await tts.synthesize(entry.text, vid)
+                    log.info("Preview TTS: '%s' [%s] via %s/%s → %.1fs",
+                             entry.text[:60], entry.language, provider_name, vid, buf.duration_s)
+                    return buf
+                except Exception as e:
+                    log.warning("TTS failed for '%s' [%s]: %s", entry.text[:40], entry.language, e)
+                    return None
+
+            # If a specific entry ID was given, use it directly
             if entry_id:
                 result = await session.execute(
                     select(CorpusEntry).where(CorpusEntry.id == uuid.UUID(entry_id))
                 )
                 entry = result.scalar_one_or_none()
                 if entry:
-                    text = entry.text
-            if not text and category:
-                # Random English entry from this category
-                result = await session.execute(
-                    select(CorpusEntry)
-                    .where(CorpusEntry.category == category, CorpusEntry.language == "en")
-                    .order_by(func.random())
-                    .limit(1)
-                )
-                entry = result.scalar_one_or_none()
-                if entry:
-                    text = entry.text
-            if not text:
-                # Any random English entry
-                result = await session.execute(
-                    select(CorpusEntry)
-                    .where(CorpusEntry.language == "en")
-                    .order_by(func.random())
-                    .limit(1)
-                )
-                entry = result.scalar_one_or_none()
-                if entry:
-                    text = entry.text
-            if not text:
-                text = "The quick brown fox jumps over the lazy dog"
+                    audio = await _try_synthesize(entry)
 
-            # Synthesize via TTS
-            provider_name = config.get("tts_provider", "edge")
-            voice_id = config.get("voice_id", "")
-            try:
-                from backend.app.api.speech import _load_tts_provider
-                tts = _load_tts_provider(provider_name)
-                if tts is None:
-                    raise ValueError(f"TTS provider '{provider_name}' not available")
-                # Pick a default voice if none specified
-                if not voice_id:
-                    voices = await tts.list_voices()
-                    voice_id = voices[0].voice_id if voices else "en-US-AriaNeural"
-                audio = await tts.synthesize(text, voice_id)
-                log.info("Preview TTS: '%s' via %s/%s → %.1fs", text, provider_name, voice_id, audio.duration_s)
-            except Exception as e:
-                log.warning("TTS preview failed (%s), falling back to silence: %s", provider_name, e)
-                raise HTTPException(500, f"TTS synthesis failed: {e}")
+            # Otherwise pick random entries, retrying up to 3 times on TTS failure
+            if audio is None:
+                for attempt in range(3):
+                    entry = await _pick_entry(category if category else None)
+                    if not entry:
+                        break
+                    audio = await _try_synthesize(entry)
+                    if audio is not None:
+                        break
+
+            if audio is None:
+                raise HTTPException(500, "TTS synthesis failed after retries")
 
     # ---- noise_generator ----
     elif type_id == "noise_generator":
