@@ -116,7 +116,7 @@ export const useGraphStore = create<GraphState>((set, get) => ({
   appendHistogramValue: (nodeId, value) => set((s) => ({
     histogramData: {
       ...s.histogramData,
-      [nodeId]: [...(s.histogramData[nodeId] || []).slice(-199), value],
+      [nodeId]: [...(s.histogramData[nodeId] || []), value],
     },
   })),
   clearHistogramData: (nodeId) => set((s) => ({

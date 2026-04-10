@@ -145,6 +145,15 @@ export default function BaseNode({ data, selected, id }: NodeProps) {
         {d.type_id === 'tts' && (
           <div className="text-gray-700 font-medium">{String(d.config?.provider || 'edge')}</div>
         )}
+        {d.type_id === 'text_source' && (
+          <div className="text-gray-700 font-medium truncate max-w-[130px]">
+            {d.config?.source_mode === 'custom'
+              ? (String(d.config?.text || '').slice(0, 30) || '(empty)')
+              : d.config?.source_mode === 'random_catalog'
+                ? `Random: ${String(d.config?.catalog || 'car_commands')}`
+                : String(d.config?.catalog || 'car_commands')}
+          </div>
+        )}
 
         {/* Input handles */}
         {allInputs.map((port, i) => (

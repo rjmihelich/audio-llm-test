@@ -755,6 +755,41 @@ def _build_registry() -> dict[str, NodeTypeDef]:
         color="#A3E635",
     ))
 
+    nodes.append(NodeTypeDef(
+        type_id="text_source",
+        label="Text Source",
+        category="sources",
+        description="Type custom text or select from a catalog of responses. Outputs text each iteration.",
+        inputs=[],
+        outputs=[
+            PortDef("text_out", PortType.text, description="Text output"),
+        ],
+        config_fields=[
+            ConfigField("source_mode", "select", "Mode", "custom",
+                        options=[
+                            {"value": "custom", "label": "Custom Text"},
+                            {"value": "catalog", "label": "From Catalog"},
+                            {"value": "random_catalog", "label": "Random from Catalog"},
+                        ]),
+            ConfigField("text", "string", "Text", "",
+                        multiline=True,
+                        description="Text to output (used in Custom mode)"),
+            ConfigField("catalog", "select", "Catalog", "car_commands",
+                        options=[
+                            {"value": "car_commands", "label": "Car Commands"},
+                            {"value": "navigation", "label": "Navigation Queries"},
+                            {"value": "media", "label": "Media Control"},
+                            {"value": "general", "label": "General Questions"},
+                            {"value": "adversarial", "label": "Adversarial Prompts"},
+                        ],
+                        description="Pre-built catalog to select from"),
+            ConfigField("catalog_index", "number", "Catalog Index", 0,
+                        min_val=0, max_val=999, step=1,
+                        description="Specific index in catalog (0=first). Ignored in random mode."),
+        ],
+        color="#22C55E",
+    ))
+
     # -----------------------------------------------------------------------
     # EVALUATION BLOCKS
     # -----------------------------------------------------------------------

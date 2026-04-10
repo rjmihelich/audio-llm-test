@@ -47,7 +47,7 @@ async def _run_content_safety_group(
             "passed": False,
             "evaluator": evaluator.name,
             "details": {"error": "No text_in provided for evaluation"},
-        }}
+        }, "text_out": "1"}
 
     user_query = config.get("user_query", "")
 

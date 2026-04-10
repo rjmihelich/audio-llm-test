@@ -58,6 +58,19 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
         { name: 'file_path', type: 'string', label: 'File Path', default: '', description: '' },
       ],
     },
+    text_source: {
+      type_id: 'text_source', label: 'Text Source', category: 'sources', color: '#22C55E',
+      description: 'Type custom text or select from a catalog of responses',
+      dynamic_inputs: false,
+      inputs: [],
+      outputs: [{ name: 'text_out', type: 'text', required: false, description: 'Text output' }],
+      config_fields: [
+        { name: 'source_mode', type: 'select', label: 'Mode', default: 'custom', options: [{ value: 'custom', label: 'Custom Text' }, { value: 'catalog', label: 'From Catalog' }, { value: 'random_catalog', label: 'Random from Catalog' }], description: '' },
+        { name: 'text', type: 'string', label: 'Text', default: '', description: 'Text to output (Custom mode)', multiline: true },
+        { name: 'catalog', type: 'select', label: 'Catalog', default: 'car_commands', options: [{ value: 'car_commands', label: 'Car Commands' }, { value: 'navigation', label: 'Navigation Queries' }, { value: 'media', label: 'Media Control' }, { value: 'general', label: 'General Questions' }, { value: 'adversarial', label: 'Adversarial Prompts' }], description: 'Pre-built catalog' },
+        { name: 'catalog_index', type: 'number', label: 'Catalog Index', default: 0, min: 0, max: 999, step: 1, description: 'Index in catalog (0=first). Ignored in random mode.' },
+      ],
+    },
     mixer: {
       type_id: 'mixer', label: 'Audio Mixer', category: 'processing', color: '#FBBF24',
       description: 'Mix N audio inputs with per-channel gain and master output',

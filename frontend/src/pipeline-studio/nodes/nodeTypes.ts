@@ -8,6 +8,7 @@ const nodeTypes: Record<string, typeof BaseNode> = {
   speech_source: BaseNode,
   noise_generator: BaseNode,
   audio_file: BaseNode,
+  text_source: BaseNode,
   mixer: BaseNode,
   echo_simulator: BaseNode,
   eq_filter: BaseNode,

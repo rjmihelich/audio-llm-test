@@ -10,6 +10,7 @@ _EXECUTOR_MAP: dict[str, str] = {
     "speech_source": "audio_sources",
     "noise_generator": "audio_sources",
     "audio_file": "audio_sources",
+    "text_source": "audio_sources",
     # audio processing
     "mixer": "audio_processing",
     "echo_simulator": "audio_processing",
