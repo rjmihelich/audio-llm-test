@@ -462,6 +462,19 @@ export const STATIC_REGISTRY: NodeTypeRegistry = {
         { name: 'pass_silence', type: 'boolean', label: 'Pass Silence to Inactive', default: false, description: 'Send silence/empty to non-selected routes (vs nothing)' },
       ],
     },
+    triage_classifier: {
+      type_id: 'triage_classifier', label: 'Triage Classifier', category: 'logic', color: '#67E8F9',
+      description: 'Keyword/regex binary classifier: 0 = vehicle control command, 1 = general LLM request. Designed for in-car voice router on ARM.',
+      dynamic_inputs: false,
+      inputs: [{ name: 'text_in', type: 'text', required: true, description: 'User utterance (from STT)' }],
+      outputs: [
+        { name: 'text_out', type: 'text', required: false, description: 'Classification result: 0 or 1' },
+        { name: 'control', type: 'text', required: false, description: 'Route index (same as text_out, for router control input)' },
+      ],
+      config_fields: [
+        { name: 'default_class', type: 'select', label: 'Default Class', default: '1', options: [{ value: '0', label: '0 — Vehicle Command' }, { value: '1', label: '1 — General / LLM' }], description: 'Fallback when no pattern matches' },
+      ],
+    },
     histogram: {
       type_id: 'histogram', label: 'Histogram', category: 'logic', color: '#67E8F9',
       description: 'Real-time histogram of control signal / eval output values',

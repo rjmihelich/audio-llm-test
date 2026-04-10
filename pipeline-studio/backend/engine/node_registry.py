@@ -1019,6 +1019,29 @@ def _build_registry() -> dict[str, NodeTypeDef]:
     ))
 
     nodes.append(NodeTypeDef(
+        type_id="triage_classifier",
+        label="Triage Classifier",
+        category="logic",
+        description="Keyword/regex binary classifier: 0 = vehicle control command, 1 = general LLM request. Designed for in-car voice router on ARM.",
+        inputs=[
+            PortDef("text_in", PortType.text, required=True, description="User utterance (from STT)"),
+        ],
+        outputs=[
+            PortDef("text_out", PortType.text, required=False, description="Classification result: '0' or '1'"),
+            PortDef("control", PortType.text, required=False, description="Route index (same as text_out, for router control input)"),
+        ],
+        config_fields=[
+            ConfigField("default_class", "select", "Default Class", "1",
+                        options=[
+                            {"value": "0", "label": "0 — Vehicle Command"},
+                            {"value": "1", "label": "1 — General / LLM"},
+                        ],
+                        description="Fallback when no pattern matches"),
+        ],
+        color="#67E8F9",
+    ))
+
+    nodes.append(NodeTypeDef(
         type_id="histogram",
         label="Histogram",
         category="logic",
