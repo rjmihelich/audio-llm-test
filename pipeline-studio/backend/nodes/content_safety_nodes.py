@@ -133,6 +133,8 @@ async def execute_master_eval(
     async def _run_category(name: str):
         factory = getattr(cs, f"create_{name}_evaluator")
         evaluator = factory(judge_backend=judge_backend, pass_threshold=pass_threshold)
+        # Override per-group weakest-link with the master config value
+        evaluator._weakest_link_threshold = weakest_link
         result = await evaluator.evaluate(
             response_text=str(text_in),
             user_query=str(user_query),
@@ -156,7 +158,7 @@ async def execute_master_eval(
         category_details[name] = {
             "score": score,
             "passed": result.passed,
-            "details": result.details if hasattr(result, "details") else {},
+            "details": result.details,
         }
         if score < weakest_link:
             weakest_link_fail = True

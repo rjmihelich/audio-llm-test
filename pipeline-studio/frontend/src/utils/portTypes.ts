@@ -16,7 +16,7 @@ export const PORT_LABELS: Record<PortType, string> = {
 
 export function portTypeFromHandle(handleId: string): PortType {
   if (handleId.startsWith('audio') || handleId === 'mic_in' || handleId === 'speaker_in') return 'audio'
-  if (handleId.startsWith('text') || handleId === 'control' || handleId === 'value_in') return 'text'
+  if (handleId.startsWith('text') || handleId === 'control' || handleId === 'value_in' || handleId === 'query_in') return 'text'
   if (handleId.startsWith('eval')) return 'evaluation'
   return 'audio'
 }
